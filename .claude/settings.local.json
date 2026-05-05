@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(open \"/Users/wonjun/Desktop/a-eye Design System/a-eye Mockup.html\")",
+      "Bash(python3 -m http.server 8787)"
+    ]
+  }
+}

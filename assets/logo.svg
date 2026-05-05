@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="aeye-grad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#06B6D4"></stop>
+      <stop offset="100%" stop-color="#5B6BFF"></stop>
+    </linearGradient>
+  </defs>
+  
+  <circle cx="22" cy="24" r="14" stroke="url(#aeye-grad)" stroke-width="3" fill="none" opacity="0.85"></circle>
+  <circle cx="42" cy="24" r="14" stroke="url(#aeye-grad)" stroke-width="3" fill="none" opacity="0.85"></circle>
+  <circle cx="32" cy="40" r="14" stroke="url(#aeye-grad)" stroke-width="3" fill="none" opacity="0.85"></circle>
+  
+  <circle cx="32" cy="29.5" r="5" fill="url(#aeye-grad)"></circle>
+</svg>

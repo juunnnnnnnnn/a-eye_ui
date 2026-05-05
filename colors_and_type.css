@@ -1,0 +1,153 @@
+/* a-eye Design System — Colors & Typography Tokens
+   ---------------------------------------------------
+   Mood: Premium medical diagnostic + Apple Vision Pro + Linear + Anthropic.
+   Restrained glassmorphism, subtle gradient glow, sci-fi scan-line motif.
+*/
+
+/* ---- Web fonts (Pretendard for KR, Inter for EN, JetBrains Mono for numerics) ---- */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap");
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css");
+
+:root {
+  /* ---------------- Light Mode ---------------- */
+  --bg:            #FAFAFC;
+  --surface:       #FFFFFF;
+  --surface-2:     #F1F2F7;
+  --fg:            #0F172A;
+  --fg-muted:      #64748B;
+  --border:        #E2E8F0;
+  --border-strong: #CBD5E1;
+
+  --primary:       #5B6BFF;
+  --primary-ink:   #FFFFFF;
+  --secondary:     #06B6D4;
+  --grad-from:     #06B6D4;
+  --grad-to:       #5B6BFF;
+
+  /* Status */
+  --status-real:       #10B981;   /* safe / Real */
+  --status-uncertain:  #F59E0B;   /* warn / Uncertain */
+  --status-ai:         #EF4444;   /* danger / AI-generated */
+
+  /* Status soft (12% bg) */
+  --status-real-soft:      rgba(16, 185, 129, 0.12);
+  --status-uncertain-soft: rgba(245, 158, 11, 0.12);
+  --status-ai-soft:        rgba(239, 68, 68, 0.12);
+
+  /* Elevation — light: real shadows */
+  --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 1px rgba(15, 23, 42, 0.03);
+  --shadow-2: 0 4px 12px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-3: 0 18px 40px -16px rgba(15, 23, 42, 0.18), 0 4px 12px rgba(15, 23, 42, 0.06);
+  --glow-primary: 0 8px 32px -8px rgba(91, 107, 255, 0.45);
+  --glow-cyan:    0 8px 32px -8px rgba(6, 182, 212, 0.45);
+
+  /* Radius */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 24px;
+  --r-pill: 999px;
+
+  /* Spacing scale (4pt) */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+
+  /* Type stack — KR + EN naturally mixed */
+  --font-sans: "Inter", "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Geist Mono", ui-monospace, Consolas, monospace;
+
+  /* Type scale */
+  --t-display: 72px;   /* score numerals */
+  --t-h1: 32px;
+  --t-h2: 24px;
+  --t-h3: 20px;
+  --t-body: 15px;
+  --t-sm: 13px;
+  --t-xs: 11px;
+
+  --lh-tight: 1.15;
+  --lh-snug:  1.3;
+  --lh-body:  1.6;
+  --tracking-tight: -0.03em;
+  --tracking-normal: -0.01em;
+  --tracking-wide:   0.02em;
+}
+
+/* ---------------- Dark Mode ---------------- */
+.theme-dark, [data-theme="dark"] {
+  --bg:            #0A0E1A;
+  --surface:       #111827;
+  --surface-2:     #1F2937;
+  --fg:            #F9FAFB;
+  --fg-muted:      #9CA3AF;
+  --border:        rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  --primary:       #A78BFA;
+  --primary-ink:   #0A0E1A;
+  --secondary:     #22D3EE;
+  --grad-from:     #22D3EE;
+  --grad-to:       #A78BFA;
+
+  --status-real:       #34D399;
+  --status-uncertain:  #FBBF24;
+  --status-ai:         #FB7185;
+
+  --status-real-soft:      rgba(52, 211, 153, 0.14);
+  --status-uncertain-soft: rgba(251, 191, 36, 0.14);
+  --status-ai-soft:        rgba(251, 113, 133, 0.14);
+
+  /* Elevation — dark: replace shadow with inner glow + subtle outer */
+  --shadow-1: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --shadow-2: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-3: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 24px 48px -16px rgba(0, 0, 0, 0.6);
+  --glow-primary: 0 8px 40px -8px rgba(167, 139, 250, 0.55);
+  --glow-cyan:    0 8px 40px -8px rgba(34, 211, 238, 0.55);
+}
+
+/* ---------------- Semantic helpers ---------------- */
+.aeye-h1 { font: 700 var(--t-h1)/var(--lh-tight) var(--font-sans); letter-spacing: var(--tracking-tight); color: var(--fg); }
+.aeye-h2 { font: 700 var(--t-h2)/var(--lh-snug) var(--font-sans); letter-spacing: var(--tracking-tight); color: var(--fg); }
+.aeye-h3 { font: 600 var(--t-h3)/var(--lh-snug) var(--font-sans); letter-spacing: var(--tracking-normal); color: var(--fg); }
+.aeye-body { font: 400 var(--t-body)/var(--lh-body) var(--font-sans); color: var(--fg); }
+.aeye-muted { color: var(--fg-muted); }
+.aeye-mono { font-family: var(--font-mono); font-feature-settings: "tnum" 1, "ss01" 1; }
+.aeye-display { font: 700 var(--t-display)/0.95 var(--font-mono); letter-spacing: -0.04em; }
+
+/* Gradient text (logo / headers) */
+.aeye-gradient-text {
+  background: linear-gradient(135deg, var(--grad-from) 0%, var(--grad-to) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* CTA */
+.aeye-cta {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 14px 20px;
+  border-radius: var(--r-lg);
+  font: 600 var(--t-body)/1 var(--font-sans);
+  letter-spacing: var(--tracking-normal);
+  color: #fff;
+  background: linear-gradient(135deg, var(--grad-from), var(--grad-to));
+  box-shadow: var(--glow-primary);
+  border: 0; cursor: pointer;
+  transition: transform 120ms ease, box-shadow 200ms ease;
+}
+.aeye-cta:active { transform: scale(0.98); }
+
+/* Card */
+.aeye-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+}

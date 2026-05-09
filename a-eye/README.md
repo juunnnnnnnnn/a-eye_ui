@@ -18,7 +18,7 @@ A-EYE는 AI 생성 이미지 가능성과 의심 영역을 휴대폰에서 바�
 - Expo Go 앱
 - ngrok 또는 HTTPS 터널 도구
 
-## 3. 팀원용 설치 순서
+## 3. 설치 순서
 
 GitHub에는 코드만 올라갑니다. 실제 모델 파일은 용량이 크기 때문에 구글드라이브에서 따로 내려받아야 합니다.
 
@@ -42,7 +42,6 @@ echo "24_realworld_artifact_30ep" > backend/models/best.pt.version.txt
 a-eye/backend/models/best.pt
 ```
 
-`best.pt`는 GitHub에 올리지 않습니다. `.gitignore`에서 `backend/models/*.pt`가 제외되어 있습니다.
 
 ## 4. 백엔드 실행
 

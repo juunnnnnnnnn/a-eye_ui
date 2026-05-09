@@ -1,6 +1,10 @@
 const { useEffect, useMemo, useRef, useState } = React;
 
 const STORAGE_KEY = "a-eye-app-state-v1";
+const MAX_HISTORY_ITEMS = 8;
+const MAX_UPLOAD_PREVIEW_SIZE = 720;
+const UPLOAD_PREVIEW_QUALITY = 0.76;
+const PLACEHOLDER_IMAGE_SRC = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 640'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%2306B6D4'/%3E%3Cstop offset='1' stop-color='%235B6BFF'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='640' height='640' fill='%23F1F5F9'/%3E%3Ccircle cx='250' cy='260' r='120' fill='none' stroke='url(%23g)' stroke-width='18' opacity='.8'/%3E%3Ccircle cx='390' cy='260' r='120' fill='none' stroke='url(%23g)' stroke-width='18' opacity='.62'/%3E%3Ccircle cx='320' cy='380' r='120' fill='none' stroke='url(%23g)' stroke-width='18' opacity='.72'/%3E%3Ccircle cx='320' cy='300' r='34' fill='url(%23g)'/%3E%3C/svg%3E";
 
 const SAMPLE_LIBRARY = [
   {
@@ -31,19 +35,19 @@ const ONBOARDING_PAGES = [
     title: "구조, 맥락, 디테일",
     accent: "세 시선이 하나의 결론으로.",
     body: "서로 다른 관점의 모델이 같은 이미지를 교차 검증해서,\n직관적인 하나의 판단 점수로 정리합니다.",
-    labels: ["구조", "맥락", "디테일"],
+    labels: ["STRUCTURE", "CONTEXT", "DETAIL"],
   },
   {
     title: "결과보다 과정까지",
     accent: "왜 이런 점수가 나왔는지 보여줍니다.",
     body: "단순히 AI 같다고 말하는 데서 끝나지 않고,\n세부 점수와 요약 설명을 함께 제공합니다.",
-    labels: ["스캔", "교차검증", "요약"],
+    labels: ["SCAN", "VERIFY", "SUMMARY"],
   },
   {
     title: "빠르게 확인하고 저장",
     accent: "반복 분석도 한 흐름 안에서.",
     body: "이미지를 업로드하면 결과가 히스토리에 자동으로 저장되고,\n언제든 다시 꺼내볼 수 있습니다.",
-    labels: ["업로드", "분석", "기록"],
+    labels: ["UPLOAD", "ANALYZE", "HISTORY"],
   },
 ];
 
@@ -61,12 +65,77 @@ function readStoredState() {
     }
     const parsed = JSON.parse(raw);
     return {
-      history: Array.isArray(parsed.history) ? parsed.history : [],
+      history: Array.isArray(parsed.history) ? parsed.history.map(normalizeHistoryItem).filter(Boolean).slice(0, MAX_HISTORY_ITEMS) : [],
       settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) },
     };
   } catch (error) {
     return { history: [], settings: DEFAULT_SETTINGS };
   }
+}
+
+function normalizeHistoryItem(item) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const score = Number.isFinite(item.score) ? item.score : 50;
+  const status = ["ai", "real", "uncertain"].includes(item.status)
+    ? item.status
+    : score >= 72 ? "ai" : score <= 28 ? "real" : "uncertain";
+  const meta = getStatusMeta(status, score);
+  const structure = Number.isFinite(item.breakdown?.structure) ? item.breakdown.structure : score;
+  const context = Number.isFinite(item.breakdown?.context) ? item.breakdown.context : score;
+  const detail = Number.isFinite(item.breakdown?.detail) ? item.breakdown.detail : score;
+
+  return {
+    ...item,
+    id: item.id || `result-restored-${hashString(`${item.name || "image"}-${score}-${item.analyzedAt || ""}`)}`,
+    name: item.name || "restored-image.jpg",
+    src: item.src || PLACEHOLDER_IMAGE_SRC,
+    preset: item.preset || "upload",
+    analyzedAt: item.analyzedAt || new Date().toISOString(),
+    score,
+    status,
+    summaryTitle: item.summaryTitle || meta.title,
+    summaryLine: item.summaryLine || meta.line,
+    pillLabel: item.pillLabel || meta.pill,
+    breakdown: { structure, context, detail },
+    note: item.note || "저장된 분석 이미지",
+    sizeLabel: item.sizeLabel || "저장된 파일",
+  };
+}
+
+function makePersistableHistory(history, stripUploadImages = false) {
+  return history.slice(0, MAX_HISTORY_ITEMS).map((item) => {
+    if (!stripUploadImages || item.preset !== "upload") {
+      return item;
+    }
+    return {
+      ...item,
+      src: PLACEHOLDER_IMAGE_SRC,
+      note: `${item.note || "사용자가 업로드한 이미지"} · 미리보기는 저장 공간 보호를 위해 대체 이미지로 보관됨`,
+    };
+  });
+}
+
+function persistState(history, settings) {
+  const attempts = [
+    makePersistableHistory(history, false),
+    makePersistableHistory(history.slice(0, 4), false),
+    makePersistableHistory(history.slice(0, 4), true),
+    [],
+  ];
+
+  for (const persistableHistory of attempts) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ history: persistableHistory, settings }));
+      return true;
+    } catch (error) {
+      // Try the smaller payload below. Large phone photos can exceed localStorage.
+    }
+  }
+
+  return false;
 }
 
 function hashString(value) {
@@ -103,6 +172,106 @@ function getStatusMeta(status, score) {
   };
 }
 
+function getEvidencePoints(result) {
+  const { status } = result;
+  const breakdown = result.breakdown || {
+    structure: result.score || 50,
+    context: result.score || 50,
+    detail: result.score || 50,
+  };
+  if (status === "ai") {
+    return [
+      { value: breakdown.structure, text: "패치 경계선에서 반복적인 생성 흔적이 감지됐습니다", level: "high" },
+      { value: breakdown.context, text: "배경과 피사체 사이의 맥락 불일치가 확인됐습니다", level: "high" },
+      { value: breakdown.detail, text: "피부·질감에서 인공적인 균일성이 나타납니다", level: "high" },
+    ].sort((a, b) => b.value - a.value).slice(0, 3);
+  }
+  if (status === "real") {
+    return [
+      { value: breakdown.structure, text: "자연스러운 노이즈와 구조 패턴이 확인됐습니다", level: "safe" },
+      { value: breakdown.context, text: "조명과 그림자의 물리적 일관성이 유지됩니다", level: "safe" },
+      { value: breakdown.detail, text: "유기적인 질감과 자연스러운 경계선이 관찰됩니다", level: "safe" },
+    ].sort((a, b) => a.value - b.value).slice(0, 3);
+  }
+  return [
+    { text: "AI 생성 패턴과 실사 패턴이 혼재합니다", level: "mid" },
+    { text: "모델 간 의견 불일치로 추가 검토가 필요합니다", level: "mid" },
+    { text: "고해상도 원본으로 재분석을 권장합니다", level: "mid" },
+  ];
+}
+
+function ShareCardModal({ result, onClose }) {
+  const isAi = result.status === "ai";
+  const isReal = result.status === "real";
+  const statusLabel = isAi ? "AI 생성" : isReal ? "실사 사진" : "판단 불확실";
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: "absolute", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.68)", backdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px 20px" }}
+    >
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", borderRadius: 28, overflow: "hidden", background: "var(--bg)", boxShadow: "0 40px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.08)" }}>
+
+        {/* 카드 헤더 */}
+        <div style={{ padding: "28px 24px 22px", background: "linear-gradient(135deg, var(--grad-from), var(--grad-to))", display: "flex", flexDirection: "column", alignItems: "center", gap: 14, position: "relative" }}>
+          <div style={{ font: "800 11px/1 var(--font-mono)", color: "rgba(255,255,255,0.6)", letterSpacing: "0.2em" }}>A — EYE</div>
+          <div style={{ width: 88, height: 88, borderRadius: 999, border: "2.5px solid rgba(255,255,255,0.35)", background: "rgba(255,255,255,0.12)", backdropFilter: "blur(8px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ font: "800 30px/1 var(--font-mono)", color: "#fff" }}>{result.score}</div>
+            <div style={{ font: "600 11px/1 var(--font-sans)", color: "rgba(255,255,255,0.65)", marginTop: 2 }}>%</div>
+          </div>
+          <div style={{ padding: "5px 16px", borderRadius: 999, background: "rgba(255,255,255,0.22)", font: "700 12px/1 var(--font-sans)", color: "#fff", letterSpacing: "0.06em" }}>{statusLabel}</div>
+        </div>
+
+        {/* 카드 바디 */}
+        <div style={{ padding: "20px 22px 22px", display: "flex", flexDirection: "column", gap: 16 }}>
+
+          {/* 이미지 + 파일명 */}
+          <div style={{ display: "flex", gap: 12, alignItems: "center", padding: "12px 14px", borderRadius: 14, background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <div style={{ width: 44, height: 44, borderRadius: 10, background: `center/cover url(${result.src})`, border: "1px solid var(--border)", flexShrink: 0 }}/>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ font: "600 12px/1.3 var(--font-sans)", color: "var(--fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{result.name}</div>
+              <div style={{ font: "400 11px/1.3 var(--font-sans)", color: "var(--fg-muted)", marginTop: 3 }}>{formatWhen(result.analyzedAt)}</div>
+            </div>
+          </div>
+
+          {/* 3축 점수 */}
+          <div style={{ display: "flex", gap: 8 }}>
+            {[
+              { label: "구조", value: result.breakdown.structure },
+              { label: "맥락", value: result.breakdown.context },
+              { label: "디테일", value: result.breakdown.detail },
+            ].map((item) => (
+              <div key={item.label} style={{ flex: 1, padding: "10px 6px", borderRadius: 12, background: "var(--surface)", border: "1px solid var(--border)", textAlign: "center" }}>
+                <div style={{ font: "700 15px/1 var(--font-mono)", color: "var(--fg)" }}>{item.value}<span style={{ font: "500 10px/1 var(--font-mono)", color: "var(--fg-muted)" }}>%</span></div>
+                <div style={{ font: "500 10px/1 var(--font-sans)", color: "var(--fg-muted)", marginTop: 5 }}>{item.label}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ font: "400 12px/1.55 var(--font-sans)", color: "var(--fg-muted)", textAlign: "center" }}>{result.summaryLine}</div>
+
+          {/* 버튼 */}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={onClose} style={{ flex: 1, padding: "12px", borderRadius: 14, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--fg-muted)", font: "600 13px/1 var(--font-sans)", cursor: "pointer" }}>닫기</button>
+            <button
+              onClick={() => {
+                if (navigator.share) {
+                  navigator.share({ title: "A-EYE 판별 결과", text: `${result.name} — ${result.summaryLine}` });
+                } else {
+                  alert("공유 기능은 모바일에서 지원됩니다.");
+                }
+              }}
+              style={{ flex: 2, padding: "12px", borderRadius: 14, border: "none", background: "linear-gradient(135deg, var(--grad-from), var(--grad-to))", color: "#fff", font: "600 13px/1 var(--font-sans)", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer" }}
+            >
+              <IconShare size={14}/> 공유하기
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function createXaiFindings(seed, status, score) {
   const baseIntensity = status === "ai" ? 0.86 : status === "uncertain" ? 0.64 : 0.34;
   const labels = status === "real"
@@ -130,7 +299,7 @@ function createXaiFindings(seed, status, score) {
 }
 
 function getResultXai(result) {
-  if (result.xai) {
+  if (result.xai?.findings?.length) {
     return result.xai;
   }
 
@@ -140,6 +309,49 @@ function getResultXai(result) {
     coverage: Math.round(findings.reduce((sum, item) => sum + item.intensity, 0) / findings.length),
     findings,
   };
+}
+
+function createImagePreview(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      const originalSrc = reader.result;
+
+      if (!file.type.startsWith("image/")) {
+        resolve(originalSrc);
+        return;
+      }
+
+      const image = new Image();
+      image.onload = () => {
+        try {
+          const scale = Math.min(1, MAX_UPLOAD_PREVIEW_SIZE / Math.max(image.width, image.height));
+          const width = Math.max(1, Math.round(image.width * scale));
+          const height = Math.max(1, Math.round(image.height * scale));
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const context = canvas.getContext("2d");
+
+          if (!context) {
+            resolve(originalSrc);
+            return;
+          }
+
+          context.drawImage(image, 0, 0, width, height);
+          resolve(canvas.toDataURL("image/jpeg", UPLOAD_PREVIEW_QUALITY));
+        } catch (error) {
+          resolve(originalSrc);
+        }
+      };
+      image.onerror = () => resolve(originalSrc);
+      image.src = originalSrc;
+    };
+
+    reader.readAsDataURL(file);
+  });
 }
 
 function createAnalysis(image) {
@@ -366,21 +578,27 @@ function OnboardingView({ index, onNext, onSkip }) {
               <stop offset="0%" stopColor="var(--secondary)" stopOpacity="0.82"/>
               <stop offset="100%" stopColor="var(--primary)" stopOpacity="0.26"/>
             </linearGradient>
+            <linearGradient id="txt-a" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="var(--grad-from)"/>
+              <stop offset="100%" stopColor="var(--grad-from)" stopOpacity="0.7"/>
+            </linearGradient>
+            <linearGradient id="txt-b" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="var(--grad-to)"/>
+              <stop offset="100%" stopColor="var(--secondary)"/>
+            </linearGradient>
+            <linearGradient id="txt-c" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="var(--secondary)"/>
+              <stop offset="100%" stopColor="var(--grad-to)"/>
+            </linearGradient>
           </defs>
           <circle cx="100" cy="90" r="62" fill="none" stroke="url(#app-ob-a)" strokeWidth="3.5"/>
           <circle cx="180" cy="90" r="62" fill="none" stroke="url(#app-ob-b)" strokeWidth="3.5"/>
           <circle cx="140" cy="140" r="62" fill="none" stroke="url(#app-ob-c)" strokeWidth="3.5"/>
           <circle cx="140" cy="106" r="14" fill="url(#app-ob-c)"/>
           <circle cx="140" cy="106" r="6" fill="var(--surface)"/>
-          {/* left label */}
-          <rect x="61" y="57" width="48" height="22" rx="11" fill="var(--surface)" fillOpacity="0.85"/>
-          <text x="85" y="72" textAnchor="middle" fill="var(--fg)" fontFamily="var(--font-sans)" fontSize="12" fontWeight="700">{step.labels[0]}</text>
-          {/* right label */}
-          <rect x="171" y="57" width="48" height="22" rx="11" fill="var(--surface)" fillOpacity="0.85"/>
-          <text x="195" y="72" textAnchor="middle" fill="var(--fg)" fontFamily="var(--font-sans)" fontSize="12" fontWeight="700">{step.labels[1]}</text>
-          {/* bottom label */}
-          <rect x="108" y="161" width="64" height="22" rx="11" fill="var(--surface)" fillOpacity="0.85"/>
-          <text x="140" y="176" textAnchor="middle" fill="var(--fg)" fontFamily="var(--font-sans)" fontSize="12" fontWeight="700">{step.labels[2]}</text>
+          <text x="85" y="72" textAnchor="middle" fill="url(#txt-a)" fontFamily="var(--font-mono)" fontSize="12" fontWeight="800" letterSpacing="0.1em">{step.labels[0]}</text>
+          <text x="195" y="72" textAnchor="middle" fill="url(#txt-b)" fontFamily="var(--font-mono)" fontSize="12" fontWeight="800" letterSpacing="0.1em">{step.labels[1]}</text>
+          <text x="140" y="176" textAnchor="middle" fill="url(#txt-c)" fontFamily="var(--font-mono)" fontSize="12" fontWeight="800" letterSpacing="0.1em">{step.labels[2]}</text>
         </svg>
       </div>
 
@@ -407,6 +625,7 @@ function HomeView({
   onOpenHistory,
   onChooseFile,
   onChooseCamera,
+  onToggleTheme,
 }) {
   const recent = history.slice(0, 3);
 
@@ -415,7 +634,7 @@ function HomeView({
       <AppBar
         right={
           <>
-            <IconButton ariaLabel="theme" onClick={onOpenSettings}>
+            <IconButton ariaLabel="theme" onClick={onToggleTheme}>
               {resolvedTheme === "dark" ? <IconMoon size={18}/> : <IconSun size={18}/>}
             </IconButton>
             <IconButton ariaLabel="history" onClick={onOpenHistory}>
@@ -512,10 +731,10 @@ function HomeView({
           ) : (
             <div style={{ display: "grid", gap: 10 }}>
               {recent.map((item) => (
-                <div key={item.id} style={{ padding: 12, borderRadius: 14, background: "var(--surface)", border: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12 }}>
+                <div key={item.id} style={{ padding: 12, borderRadius: 14, background: "var(--surface)", border: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12, overflow: "hidden" }}>
                   <div style={{ width: 54, height: 54, borderRadius: 12, background: `center/cover url(${item.src})`, border: "1px solid var(--border)" }}/>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ font: "600 12px/1.35 var(--font-sans)", color: "var(--fg)" }}>{item.name}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ font: "600 12px/1.35 var(--font-sans)", color: "var(--fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
                     <div style={{ marginTop: 4, font: "500 11px/1 var(--font-sans)", color: item.status === "ai" ? "var(--status-ai)" : item.status === "real" ? "var(--status-real)" : "var(--status-uncertain)" }}>
                       {item.score}% · {item.summaryTitle}
                     </div>
@@ -602,8 +821,12 @@ function AnalyzingView({ image, progress }) {
 
 function XaiHeatmap({ result }) {
   const xai = getResultXai(result);
-  const strongest = xai.findings[0];
-  const heatmapBackground = xai.findings.map((finding) => {
+  const findings = xai.findings?.length ? xai.findings : createXaiFindings(hashString(result.name || "image"), result.status || "uncertain", result.score || 50);
+  const strongest = findings[0] || { intensity: 50 };
+  const coverage = Number.isFinite(xai.coverage)
+    ? xai.coverage
+    : Math.round(findings.reduce((sum, item) => sum + item.intensity, 0) / Math.max(findings.length, 1));
+  const heatmapBackground = findings.map((finding) => {
     const centerX = finding.left + finding.width / 2;
     const centerY = finding.top + finding.height / 2;
     const alpha = 0.2 + finding.intensity / 180;
@@ -613,16 +836,16 @@ function XaiHeatmap({ result }) {
   return (
     <div style={{ marginTop: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <div style={{ font: "700 12px/1 var(--font-sans)", color: "var(--fg)", letterSpacing: "0.04em", textTransform: "uppercase" }}>XAI 히트맵</div>
+        <div style={{ font: "700 12px/1 var(--font-sans)", color: "var(--fg)", letterSpacing: "0.04em", textTransform: "uppercase" }}>의심 구역</div>
         <div style={{ font: "700 11px/1 var(--font-mono)", color: strongest.intensity >= 70 ? "var(--status-ai)" : "var(--status-uncertain)" }}>
-          {xai.coverage}%
+          {coverage}%
         </div>
       </div>
 
       <div style={{ position: "relative", aspectRatio: "1 / 1", borderRadius: 18, overflow: "hidden", background: `center/cover url(${result.src})`, border: "1px solid var(--border)", boxShadow: "var(--shadow-2)" }}>
         <div style={{ position: "absolute", inset: 0, background: heatmapBackground, mixBlendMode: "screen" }}/>
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(15,23,42,0.02), rgba(15,23,42,0.32))" }}/>
-        {xai.findings.map((finding, index) => (
+        {findings.map((finding, index) => (
           <div
             key={finding.id}
             style={{
@@ -642,22 +865,53 @@ function XaiHeatmap({ result }) {
             </span>
           </div>
         ))}
-        <div style={{ position: "absolute", left: 12, right: 12, bottom: 12, display: "grid", gap: 6 }}>
-          {xai.findings.map((finding, index) => (
-            <div key={finding.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: 10, background: "rgba(15,23,42,0.72)", color: "#fff", backdropFilter: "blur(12px)" }}>
-              <span style={{ width: 18, height: 18, borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center", background: index === 0 ? "var(--status-ai)" : "rgba(255,255,255,0.16)", font: "800 10px/1 var(--font-mono)" }}>{index + 1}</span>
-              <span style={{ flex: 1, font: "600 11px/1.2 var(--font-sans)" }}>{finding.label}</span>
-              <span style={{ font: "700 10px/1 var(--font-mono)", color: "#fecaca" }}>{finding.intensity}%</span>
-            </div>
-          ))}
-        </div>
+      </div>
+
+      <div style={{ display: "grid", gap: 6, marginTop: 10 }}>
+        {findings.map((finding, index) => (
+          <div key={finding.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 12, background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <span style={{ width: 20, height: 20, borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center", background: index === 0 ? "var(--status-ai)" : "var(--surface-2)", border: index !== 0 ? "1px solid var(--border)" : "none", color: index === 0 ? "#fff" : "var(--fg-muted)", font: "800 10px/1 var(--font-mono)", flexShrink: 0 }}>{index + 1}</span>
+            <span style={{ flex: 1, font: "500 12px/1.2 var(--font-sans)", color: "var(--fg)" }}>{finding.label}</span>
+            <span style={{ font: "700 11px/1 var(--font-mono)", color: index === 0 ? "var(--status-ai)" : "var(--fg-muted)" }}>{finding.intensity}%</span>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
 function ResultView({ result, expanded, onToggleExpanded, onRestart, onOpenHistory, onGoHome }) {
-  if (!result) return null;
+  const [showShare, setShowShare] = useState(false);
+  if (!result) {
+    return (
+      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <AppBar
+          right={
+            <IconButton ariaLabel="home" onClick={onGoHome}>
+              <IconHome size={16}/>
+            </IconButton>
+          }
+        />
+        <div style={{ padding: "34px 24px", flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 14 }}>
+          <div style={{ width: 58, height: 58, borderRadius: 18, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--surface)", border: "1px solid var(--border)", color: "var(--primary)" }}>
+            <IconInfo size={26}/>
+          </div>
+          <div style={{ font: "800 22px/1.2 var(--font-sans)", letterSpacing: "-0.03em", color: "var(--fg)" }}>결과를 불러오지 못했어요</div>
+          <div style={{ font: "400 13px/1.55 var(--font-sans)", color: "var(--fg-muted)" }}>분석 데이터가 비어 있거나 손상되었습니다. 홈에서 다시 분석을 시작해 주세요.</div>
+          <button className="aeye-cta" onClick={onGoHome} style={{ marginTop: 6, width: "100%" }}>
+            홈으로 돌아가기 <IconChevR size={16}/>
+          </button>
+        </div>
+      </div>
+    );
+  }
+  const evidencePoints = getEvidencePoints(result);
+  const dotColor = { high: "var(--status-ai)", safe: "var(--status-real)", mid: "var(--status-uncertain)" };
+  const statusColor = result.status === "ai" ? "#EF4444" : result.status === "real" ? "#10B981" : "#F59E0B";
+  const statusSoft = result.status === "ai" ? "rgba(239,68,68,0.08)" : result.status === "real" ? "rgba(16,185,129,0.08)" : "rgba(245,158,11,0.08)";
+  const statusBorder = result.status === "ai" ? "rgba(239,68,68,0.3)" : result.status === "real" ? "rgba(16,185,129,0.3)" : "rgba(245,158,11,0.3)";
+  const verdictText = result.status === "ai" ? "AI 생성 사진" : result.status === "real" ? "실제 사진" : "판단 불확실";
+  const displayScore = result.status === "real" ? 100 - result.score : result.score;
 
   return (
     <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -682,41 +936,40 @@ function ResultView({ result, expanded, onToggleExpanded, onRestart, onOpenHisto
           </div>
         </div>
 
-        <XaiHeatmap result={result}/>
-
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: expanded ? 14 : 22 }}>
-          <div style={{ position: "relative" }}>
-            <div className="glow-orb" style={{ width: 200, height: 200, background: result.status === "ai" ? "var(--status-ai)" : result.status === "real" ? "var(--status-real)" : "var(--status-uncertain)", opacity: 0.18, top: 10, left: 10 }}/>
-            <ScoreDonut value={result.score} status={result.status} size={expanded ? 160 : 180}/>
+        {/* 판별 결과 히어로 */}
+        <div style={{ marginTop: 16, borderRadius: 20, background: statusSoft, border: `1px solid ${statusBorder}` }}>
+          <div style={{ padding: "18px 20px 14px", display: "flex", alignItems: "center", gap: 16 }}>
+            <div style={{ width: 72, height: 72, borderRadius: 999, background: "var(--surface)", border: `2px solid ${statusBorder}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <div style={{ font: "800 28px/1 var(--font-mono)", color: statusColor, letterSpacing: "-0.04em" }}>{displayScore}</div>
+              <div style={{ font: "600 9px/1 var(--font-mono)", color: statusColor, opacity: 0.7, marginTop: 3, letterSpacing: "0.08em" }}>%</div>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ font: "800 18px/1.2 var(--font-sans)", letterSpacing: "-0.03em", color: "var(--fg)", marginBottom: 6 }}>{verdictText}</div>
+              <div style={{ font: "400 12px/1.5 var(--font-sans)", color: "var(--fg-muted)" }}>{result.summaryLine}</div>
+            </div>
           </div>
-          <div style={{ marginTop: 14 }}>
+          <div style={{ padding: "0 20px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ height: 5, borderRadius: 999, background: "var(--surface)", overflow: "hidden" }}>
+              <div style={{ width: `${displayScore}%`, height: "100%", borderRadius: 999, background: statusColor }}/>
+            </div>
             <ConfidencePill status={result.status}>{result.pillLabel}</ConfidencePill>
-          </div>
-          <div style={{ marginTop: 12, font: "500 13px/1.5 var(--font-sans)", color: "var(--fg)", textAlign: "center", maxWidth: 280 }}>
-            {result.summaryLine}
           </div>
         </div>
 
-        <button
-          onClick={onToggleExpanded}
-          style={{
-            marginTop: 20,
-            width: "100%",
-            padding: "12px 14px",
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: 14,
-            color: "var(--fg)",
-            font: "600 13px/1 var(--font-sans)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 6,
-            cursor: "pointer",
-          }}
-        >
-          {expanded ? "세부 분석 접기" : "세부 분석 보기"} <IconChevD size={14} style={{ transform: expanded ? "rotate(180deg)" : "none" }}/>
-        </button>
+        {/* 판별 근거 */}
+        <div style={{ marginTop: 12, padding: "14px 16px", borderRadius: 16, background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <div style={{ font: "600 10px/1 var(--font-mono)", color: "var(--fg-muted)", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 11 }}>판별 근거</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+            {evidencePoints.map((point, i) => (
+              <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <div style={{ width: 7, height: 7, borderRadius: 999, background: dotColor[point.level], marginTop: 4, flexShrink: 0, boxShadow: `0 0 6px ${dotColor[point.level]}` }}/>
+                <div style={{ font: "400 12px/1.55 var(--font-sans)", color: "var(--fg)" }}>{point.text}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <XaiHeatmap result={result}/>
 
         {expanded && (
           <div style={{ marginTop: 16, padding: 16, borderRadius: 16, background: "var(--surface)", border: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 14 }}>
@@ -746,6 +999,27 @@ function ResultView({ result, expanded, onToggleExpanded, onRestart, onOpenHisto
           </div>
         )}
 
+        <button
+          onClick={onToggleExpanded}
+          style={{
+            marginTop: 16,
+            width: "100%",
+            padding: "12px 14px",
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: 14,
+            color: "var(--fg)",
+            font: "600 13px/1 var(--font-sans)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+            cursor: "pointer",
+          }}
+        >
+          {expanded ? "세부 분석 접기" : "세부 분석 보기"} <IconChevD size={14} style={{ transform: expanded ? "rotate(180deg)" : "none" }}/>
+        </button>
+
         <div style={{ flex: 1 }}/>
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
           <button onClick={onRestart} style={{ flex: 1, padding: "12px 8px", borderRadius: 14, background: "var(--surface)", border: "1px solid var(--border)", color: "var(--fg)", font: "600 12px/1 var(--font-sans)", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer" }}>
@@ -761,6 +1035,14 @@ function ResultView({ result, expanded, onToggleExpanded, onRestart, onOpenHisto
             홈으로
           </button>
         </div>
+        <button
+          onClick={() => setShowShare(true)}
+          style={{ marginTop: 8, width: "100%", padding: "13px", borderRadius: 16, border: "none", background: "linear-gradient(135deg, var(--grad-from), var(--grad-to))", color: "#fff", font: "600 14px/1 var(--font-sans)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer", boxShadow: "0 8px 24px -6px color-mix(in oklab, var(--primary) 50%, transparent)" }}
+        >
+          <IconShare size={16}/> 결과 공유하기
+        </button>
+
+        {showShare && <ShareCardModal result={result} onClose={() => setShowShare(false)}/>}
       </div>
     </div>
   );
@@ -959,6 +1241,38 @@ function SettingsView({ settings, onSetTheme, onToggleAutoSave, onToggleIncludeO
   );
 }
 
+class AppErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  render() {
+    if (!this.state.hasError) {
+      return this.props.children;
+    }
+
+    return (
+      <DeviceShell theme="light">
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", padding: "76px 24px 44px", background: "var(--bg)" }}>
+          <div style={{ width: 58, height: 58, borderRadius: 18, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--surface)", border: "1px solid var(--border)", color: "var(--primary)" }}>
+            <IconInfo size={26}/>
+          </div>
+          <div style={{ marginTop: 18, font: "800 22px/1.2 var(--font-sans)", letterSpacing: "-0.03em", color: "var(--fg)" }}>화면을 다시 준비했어요</div>
+          <div style={{ marginTop: 10, font: "400 13px/1.55 var(--font-sans)", color: "var(--fg-muted)" }}>일시적인 화면 오류가 발생했습니다. 아래 버튼으로 홈 화면을 새로 불러올 수 있습니다.</div>
+          <button className="aeye-cta" style={{ width: "100%", marginTop: 22 }} onClick={() => window.location.reload()}>
+            홈 다시 열기 <IconRefresh size={16}/>
+          </button>
+        </div>
+      </DeviceShell>
+    );
+  }
+}
+
 function InteractiveApp() {
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
@@ -984,13 +1298,7 @@ function InteractiveApp() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        history,
-        settings,
-      }),
-    );
+    persistState(history, settings);
   }, [history, settings]);
 
   useEffect(() => {
@@ -1015,7 +1323,7 @@ function InteractiveApp() {
       setCurrentResult(finalResult);
       setExpanded(false);
       if (settings.autoSaveHistory) {
-        setHistory((prev) => [finalResult, ...prev.filter((item) => item.id !== finalResult.id)].slice(0, 12));
+        setHistory((prev) => [finalResult, ...prev.filter((item) => item.id !== finalResult.id)].slice(0, MAX_HISTORY_ITEMS));
       }
       setScreen("result");
     }, 3000);
@@ -1031,33 +1339,40 @@ function InteractiveApp() {
     setScreen("analyzing");
   }
 
-  function handleFilePick(event) {
+  async function handleFilePick(event) {
     const [file] = event.target.files || [];
     if (!file) return;
 
     const sizeLabel = file.size > 1024 * 1024 ? `${(file.size / (1024 * 1024)).toFixed(1)}MB` : `${Math.max(1, Math.round(file.size / 1024))}KB`;
-    const reader = new FileReader();
+    event.target.value = "";
 
-    reader.onload = () => {
+    try {
+      const previewSrc = await createImagePreview(file);
       startAnalysis({
         name: file.name,
-        src: reader.result,
+        src: previewSrc,
         preset: "upload",
         size: file.size,
         lastModified: file.lastModified,
         sizeLabel,
         note: "사용자가 업로드한 이미지",
       });
-    };
-
-    reader.readAsDataURL(file);
-
-    event.target.value = "";
+    } catch (error) {
+      startAnalysis({
+        name: file.name,
+        src: PLACEHOLDER_IMAGE_SRC,
+        preset: "upload",
+        size: file.size,
+        lastModified: file.lastModified,
+        sizeLabel,
+        note: "이미지 미리보기를 만들지 못해 대체 이미지로 분석했습니다",
+      });
+    }
   }
 
   function reopenHistoryItem(item) {
     setCurrentResult(item);
-    setExpanded(true);
+    setExpanded(false);
     setScreen("result");
   }
 
@@ -1089,6 +1404,7 @@ function InteractiveApp() {
           onOpenHistory={() => setScreen("history")}
           onChooseFile={() => fileInputRef.current?.click()}
           onChooseCamera={() => cameraInputRef.current?.click()}
+          onToggleTheme={() => setSettings((prev) => ({ ...prev, themeMode: prev.themeMode === "dark" ? "light" : "dark" }))}
         />
       );
     }
@@ -1144,4 +1460,8 @@ function InteractiveApp() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("app-root")).render(<InteractiveApp/>);
+ReactDOM.createRoot(document.getElementById("app-root")).render(
+  <AppErrorBoundary>
+    <InteractiveApp/>
+  </AppErrorBoundary>,
+);

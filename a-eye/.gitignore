@@ -1,0 +1,19 @@
+.expo/
+node_modules/
+dist/
+build/
+coverage/
+.env
+backend/venv/
+backend/__pycache__/
+backend/.pytest_cache/
+play-service-account.json
+*.log
+.DS_Store
+
+# 실제 모델 가중치는 GitHub 일반 저장소에 올리지 않습니다.
+# 팀 공유가 필요하면 Git LFS, Drive, Hugging Face, S3 같은 별도 저장소를 쓰세요.
+backend/models/*.pt
+backend/models/*.pth
+backend/models/*.onnx
+backend/models/*.safetensors

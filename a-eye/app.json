@@ -1,0 +1,63 @@
+{
+  "expo": {
+    "name": "A-EYE",
+    "slug": "a-eye",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "aeye",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0A0A"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.aeye.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "이미지 분석을 위해 카메라를 사용합니다.",
+        "NSPhotoLibraryUsageDescription": "이미지 분석을 위해 사진 라이브러리에 접근합니다."
+      }
+    },
+    "android": {
+      "package": "com.aeye.app",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0A0A0A"
+      },
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "이미지 분석을 위해 카메라를 사용합니다.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "이미지 분석을 위해 사진 라이브러리에 접근합니다."
+        }
+      ],
+      "expo-font"
+    ],
+    "extra": {
+      "defaultBackendUrl": "https://REPLACE_WITH_TUNNEL_OR_DEPLOYED_URL",
+      "eas": {
+        "projectId": "TO_BE_FILLED_BY_EAS_INIT"
+      }
+    }
+  }
+}

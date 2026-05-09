@@ -3,10 +3,7 @@ import { StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { Logo } from "@/components/Logo";
 import { useTheme } from "@/lib/theme";
-import { safeGetString } from "@/lib/storage";
 import type { ColorTokens } from "@/constants/colors";
-
-const ONBOARDING_KEY = "aeye.onboardingDone";
 
 function makeStyles(c: ColorTokens) {
   return StyleSheet.create({
@@ -45,13 +42,8 @@ export default function SplashScreen() {
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {
-    const timer = setTimeout(async () => {
-      const done = await safeGetString(ONBOARDING_KEY);
-      if (done) {
-        router.replace("/(tabs)/home");
-      } else {
-        router.replace("/onboarding");
-      }
+    const timer = setTimeout(() => {
+      router.replace("/onboarding");
     }, 1400);
     return () => clearTimeout(timer);
   }, []);

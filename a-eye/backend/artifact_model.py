@@ -220,7 +220,7 @@ class ArtifactLoRAHybrid(nn.Module):
         self.register_buffer("imagenet_mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1), persistent=False)
         self.register_buffer("imagenet_std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1), persistent=False)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def _branch_features(self, x: torch.Tensor):
         raw = x.clamp(0, 1)
         vit_x = (raw - self.imagenet_mean) / self.imagenet_std
         clip_x = (raw - self.clip_mean) / self.clip_std.clamp_min(1e-6)
@@ -228,7 +228,35 @@ class ArtifactLoRAHybrid(nn.Module):
         clip_feat = self.clip_encoder.features(clip_x)
         fft_feat = self.fft_branch(raw)
         srm_feat = self.srm_branch(raw)
+        return vit_feat, clip_feat, fft_feat, srm_feat
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        vit_feat, clip_feat, fft_feat, srm_feat = self._branch_features(x)
         return self.head(torch.cat([vit_feat, clip_feat, fft_feat, srm_feat], dim=1))
+
+    def forward_breakdown(self, x: torch.Tensor):
+        """최종 로짓과 함께 각 관점별(구조/맥락/디테일) 실제 로짓을 반환합니다.
+
+        - structure: ViT 인코더의 자체 분류 헤드 (전역 구조/형태)
+        - context:  CLIP 인코더의 자체 분류 헤드 (의미적 맥락)
+        - detail:   주파수(FFT)+노이즈(SRM) 브랜치만 통과시킨 메인 헤드 (질감/흔적)
+
+        모두 학습된 가중치를 사용하는 실제 추론 결과이며, 임의 값이 아닙니다.
+        """
+        vit_feat, clip_feat, fft_feat, srm_feat = self._branch_features(x)
+        final_logits = self.head(torch.cat([vit_feat, clip_feat, fft_feat, srm_feat], dim=1))
+
+        structure_logits = self.vit_encoder.head(vit_feat)
+        context_logits = self.clip_encoder.head(clip_feat)
+        # 디테일 관점: 구조/맥락 특징을 0으로 두고 주파수·노이즈 특징만으로 판단
+        detail_logits = self.head(
+            torch.cat([torch.zeros_like(vit_feat), torch.zeros_like(clip_feat), fft_feat, srm_feat], dim=1)
+        )
+        return final_logits, {
+            "structure": structure_logits,
+            "context": context_logits,
+            "detail": detail_logits,
+        }
 
 
 def build_artifact_lora_hybrid() -> ArtifactLoRAHybrid:

@@ -2,8 +2,15 @@ import { useEffect, useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { Logo } from "@/components/Logo";
+import { safeGetString, STORAGE_KEYS } from "@/lib/storage";
 import { useTheme } from "@/lib/theme";
 import type { ColorTokens } from "@/constants/colors";
+
+async function resolveNextRoute() {
+  // 약관 동의 전에는 동의 화면, 동의 후에는 매 실행마다 온보딩을 보여줍니다.
+  const consent = await safeGetString(STORAGE_KEYS.consent);
+  return consent ? ("/onboarding" as const) : ("/consent" as const);
+}
 
 function makeStyles(c: ColorTokens) {
   return StyleSheet.create({
@@ -42,10 +49,18 @@ export default function SplashScreen() {
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {
+    let cancelled = false;
     const timer = setTimeout(() => {
-      router.replace("/onboarding");
+      void resolveNextRoute().then((next) => {
+        if (!cancelled) {
+          router.replace(next);
+        }
+      });
     }, 1400);
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, []);
 
   return (

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Dimensions, StyleSheet, Text, View } from "react-native";
 import { Image } from "expo-image";
+import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, router } from "expo-router";
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -42,7 +43,7 @@ function makeStyles(c: ColorTokens) {
     },
     filenameText: { color: "#fff", fontSize: 11, fontWeight: "600" },
     imageWrap: { marginTop: 18, overflow: "hidden", position: "relative", borderRadius: 18 },
-    progressFill: { backgroundColor: c.primary, borderRadius: 999, height: "100%" },
+    progressFill: { borderRadius: 999, height: "100%", overflow: "hidden" },
     progressLabel: { color: c.muted, fontFamily: "monospace", fontSize: 12, fontWeight: "500" },
     progressTrack: {
       backgroundColor: c.surface2, borderRadius: 999,
@@ -51,10 +52,14 @@ function makeStyles(c: ColorTokens) {
     quote: { color: c.muted, fontStyle: "italic", fontSize: 11, lineHeight: 16, marginTop: 16, textAlign: "center" },
     safe: { backgroundColor: c.bg, flex: 1 },
     scanLine: {
-      borderRadius: 8, height: 90, left: 0, position: "absolute", right: 0, top: 0,
-      backgroundColor: "rgba(6,182,212,0.18)",
+      borderRadius: 10, height: 96, left: 0, position: "absolute", right: 0, top: 0,
+      overflow: "hidden", justifyContent: "flex-end",
       shadowColor: "#06B6D4", shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.6, shadowRadius: 16
+    },
+    scanEdge: {
+      height: 2, backgroundColor: "#22D3EE", opacity: 0.9,
+      shadowColor: "#22D3EE", shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.9, shadowRadius: 6
     },
     stepCheck: { color: "#fff", fontSize: 10, fontWeight: "800" },
     stepDot: {
@@ -122,11 +127,17 @@ export default function LoadingScreen() {
         };
         await safeSetString(STORAGE_KEYS.pendingResult, JSON.stringify(item));
         setTimeout(() => router.replace("/result"), 300);
-      } catch {
+      } catch (error) {
         if (!mountedRef.current) return;
         clearInterval(progressTimer);
-        Alert.alert("분석 실패", "서버에 연결하지 못했습니다. 설정에서 백엔드 주소를 확인해 주세요.");
-        router.replace("/(tabs)/home");
+        const message =
+          error instanceof Error && error.message
+            ? error.message
+            : "서버에 연결하지 못했습니다. 설정에서 백엔드 주소를 확인해 주세요.";
+        Alert.alert("분석 실패", message, [
+          { text: "홈으로", style: "cancel", onPress: () => router.replace("/(tabs)/home") },
+          { text: "연결 설정 열기", onPress: () => router.replace("/(tabs)/settings") }
+        ]);
       }
     }
 
@@ -167,7 +178,15 @@ export default function LoadingScreen() {
           ) : (
             <View style={[styles.analysisImage, { backgroundColor: colors.surface2 }]} />
           )}
-          <Animated.View style={[styles.scanLine, scanStyle]} />
+          <Animated.View style={[styles.scanLine, scanStyle]}>
+            <LinearGradient
+              colors={["rgba(6,182,212,0)", "rgba(6,182,212,0.28)", "rgba(91,107,255,0.28)", "rgba(91,107,255,0)"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 0, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={styles.scanEdge} />
+          </Animated.View>
           <View style={styles.filenameBadge}>
             <Text style={styles.filenameText} numberOfLines={1}>{imageName}</Text>
           </View>
@@ -193,7 +212,14 @@ export default function LoadingScreen() {
         </View>
 
         <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${progress}%` }]} />
+          <Animated.View style={[styles.progressFill, { width: `${progress}%` }]}>
+            <LinearGradient
+              colors={["#06B6D4", "#5B6BFF"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={StyleSheet.absoluteFill}
+            />
+          </Animated.View>
         </View>
 
         <Text style={styles.quote}>AI는 종종 디테일에서 흔적을 남깁니다</Text>

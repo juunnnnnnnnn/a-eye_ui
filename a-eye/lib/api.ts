@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import axios, { AxiosError } from "axios";
 import { DEFAULT_BACKEND_URL, REQUEST_TIMEOUT_MS } from "@/constants/config";
 import { safeGetString, STORAGE_KEYS } from "@/lib/storage";
@@ -14,17 +15,30 @@ export function normalizeBackendUrl(value: string): string {
 
 export async function analyzeImage(imageUri: string, imageName: string): Promise<AnalyzeResponse> {
   const baseURL = await getBackendUrl();
+  if (!baseURL) {
+    throw new Error("분석 서버 주소가 설정되지 않았습니다. 설정 > 연결 설정에서 백엔드 주소를 입력해 주세요.");
+  }
+  const fileName = imageName || "a-eye-image.jpg";
   const form = new FormData();
-  form.append("image", {
-    uri: imageUri,
-    name: imageName || "a-eye-image.jpg",
-    type: guessMimeType(imageName)
-  } as unknown as Blob);
+  if (Platform.OS === "web") {
+    // 웹: uri(blob:/data:)를 실제 Blob 으로 변환해 업로드 (RN 방식은 웹에서 동작 안 함)
+    const blob = await (await fetch(imageUri)).blob();
+    const type = blob.type && blob.type.startsWith("image/") ? blob.type : guessMimeType(fileName);
+    form.append("image", new File([blob], fileName, { type }));
+  } else {
+    // 네이티브: RN 이 uri 를 멀티파트 파일로 변환
+    form.append("image", {
+      uri: imageUri,
+      name: fileName,
+      type: guessMimeType(fileName)
+    } as unknown as Blob);
+  }
 
   try {
     const response = await axios.post<AnalyzeResponse>(`${baseURL}/api/analyze`, form, {
       timeout: REQUEST_TIMEOUT_MS,
-      headers: { "Content-Type": "multipart/form-data" }
+      // 웹은 브라우저가 boundary 포함 Content-Type 을 자동 설정하도록 빈 헤더로 둡니다.
+      headers: Platform.OS === "web" ? {} : { "Content-Type": "multipart/form-data" }
     });
     return response.data;
   } catch (error) {

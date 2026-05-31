@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { PrimaryButton } from "@/components/PrimaryButton";
@@ -15,16 +16,31 @@ function makeStyles(c: ColorTokens) {
     blank: { backgroundColor: c.black, flex: 1 },
     bottom: {
       alignItems: "center", flexDirection: "row",
-      justifyContent: "space-between", marginTop: "auto", padding: 24
+      justifyContent: "space-between", paddingHorizontal: 28, paddingBottom: 28, paddingTop: 8
     },
     camera: { flex: 1 },
-    close: {
-      alignSelf: "flex-start", backgroundColor: "rgba(15,23,42,0.58)",
-      borderRadius: 999, margin: 20, paddingHorizontal: 16, paddingVertical: 10
-    },
-    closeText: { color: c.white, fontSize: 14, fontWeight: "800" },
     container: { backgroundColor: c.black, flex: 1 },
     overlay: { ...StyleSheet.absoluteFillObject },
+    topBar: {
+      alignItems: "center", flexDirection: "row", justifyContent: "space-between",
+      paddingHorizontal: 18, paddingTop: 8
+    },
+    iconBtn: {
+      alignItems: "center", backgroundColor: "rgba(15,23,42,0.5)", borderRadius: 999,
+      height: 44, justifyContent: "center", width: 44
+    },
+    hintPill: {
+      backgroundColor: "rgba(15,23,42,0.5)", borderRadius: 999,
+      paddingHorizontal: 14, paddingVertical: 8
+    },
+    hintText: { color: c.white, fontSize: 12, fontWeight: "600" },
+    frameWrap: { alignItems: "center", flex: 1, justifyContent: "center" },
+    frameBox: { height: 256, width: 256 },
+    corner: { borderColor: "rgba(255,255,255,0.92)", height: 32, position: "absolute", width: 32 },
+    cTL: { borderLeftWidth: 3, borderTopLeftRadius: 10, borderTopWidth: 3, left: 0, top: 0 },
+    cTR: { borderRightWidth: 3, borderTopRightRadius: 10, borderTopWidth: 3, right: 0, top: 0 },
+    cBL: { borderBottomWidth: 3, borderBottomLeftRadius: 10, borderLeftWidth: 3, bottom: 0, left: 0 },
+    cBR: { borderBottomRightRadius: 10, borderBottomWidth: 3, borderRightWidth: 3, bottom: 0, right: 0 },
     permission: {
       backgroundColor: c.bg, flex: 1, gap: 14,
       justifyContent: "center", padding: 24
@@ -32,16 +48,15 @@ function makeStyles(c: ColorTokens) {
     permissionText: { color: c.muted, fontSize: 14, lineHeight: 22, marginBottom: 8 },
     permissionTitle: { color: c.fg, fontSize: 24, fontWeight: "900" },
     shutter: {
-      alignItems: "center", backgroundColor: "rgba(255,255,255,0.35)",
+      alignItems: "center", backgroundColor: "rgba(255,255,255,0.28)",
       borderColor: c.white, borderRadius: 999, borderWidth: 4,
-      height: 78, justifyContent: "center", width: 78
+      height: 80, justifyContent: "center", width: 80
     },
-    shutterInner: { backgroundColor: c.white, borderRadius: 999, height: 54, width: 54 },
+    shutterInner: { backgroundColor: c.white, borderRadius: 999, height: 58, width: 58 },
     switchButton: {
-      alignItems: "center", backgroundColor: "rgba(15,23,42,0.58)",
+      alignItems: "center", backgroundColor: "rgba(15,23,42,0.5)",
       borderRadius: 999, height: 54, justifyContent: "center", width: 54
-    },
-    switchText: { color: c.white, fontSize: 13, fontWeight: "900" }
+    }
   });
 }
 
@@ -93,15 +108,32 @@ export default function CameraScreen() {
     <View style={styles.container}>
       <CameraView ref={cameraRef} style={styles.camera} facing={facing} />
       <SafeAreaView style={styles.overlay}>
-        <Pressable style={styles.close} onPress={() => router.back()}>
-          <Text style={styles.closeText}>닫기</Text>
-        </Pressable>
+        <View style={styles.topBar}>
+          <Pressable style={styles.iconBtn} onPress={() => router.back()} accessibilityLabel="닫기">
+            <Ionicons name="close" size={22} color={colors.white} />
+          </Pressable>
+          <View style={styles.hintPill}>
+            <Text style={styles.hintText}>분석할 대상을 화면에 담아주세요</Text>
+          </View>
+          <View style={{ width: 44 }} />
+        </View>
+
+        <View style={styles.frameWrap} pointerEvents="none">
+          <View style={styles.frameBox}>
+            <View style={[styles.corner, styles.cTL]} />
+            <View style={[styles.corner, styles.cTR]} />
+            <View style={[styles.corner, styles.cBL]} />
+            <View style={[styles.corner, styles.cBR]} />
+          </View>
+        </View>
+
         <View style={styles.bottom}>
           <Pressable
             style={styles.switchButton}
             onPress={() => setFacing((f) => (f === "back" ? "front" : "back"))}
+            accessibilityLabel="카메라 전환"
           >
-            <Text style={styles.switchText}>전환</Text>
+            <Ionicons name="camera-reverse-outline" size={24} color={colors.white} />
           </Pressable>
           <Pressable
             accessibilityRole="button"
@@ -111,7 +143,7 @@ export default function CameraScreen() {
           >
             <View style={styles.shutterInner} />
           </Pressable>
-          <View style={styles.switchButton} />
+          <View style={{ width: 54 }} />
         </View>
       </SafeAreaView>
     </View>

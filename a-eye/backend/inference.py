@@ -37,9 +37,9 @@ def run_inference(image_bytes: bytes, loaded: LoadedModel) -> dict[str, Any]:
         raise RuntimeError(f"Model not loaded: {loaded.load_error}")
 
     input_tensor = _preprocess(original)
-    score = _score_model(loaded.model, input_tensor, image_bytes)
+    score, breakdown = _score_with_breakdown(loaded.model, input_tensor, image_bytes)
     heatmap_b64, overlay_b64 = gradcam_or_fallback(loaded.model, input_tensor, original, score)
-    return {
+    result = {
         "score": score,
         "verdict": "AI" if score >= 0.5 else "REAL",
         "heatmap_b64": heatmap_b64,
@@ -47,6 +47,11 @@ def run_inference(image_bytes: bytes, loaded: LoadedModel) -> dict[str, Any]:
         "model_version": loaded.model_version,
         "elapsed_ms": _elapsed_ms(started),
     }
+    if breakdown is not None:
+        result["structure_score"] = breakdown["structure"]
+        result["context_score"] = breakdown["context"]
+        result["detail_score"] = breakdown["detail"]
+    return result
 
 
 def _decode_image(image_bytes: bytes) -> Image.Image:
@@ -72,6 +77,31 @@ def _preprocess_imagenet(image: Image.Image) -> torch.Tensor:
     array = (array - np.array(mean, dtype=np.float32)) / np.array(std, dtype=np.float32)
     tensor = torch.from_numpy(array).permute(2, 0, 1).unsqueeze(0)
     return tensor
+
+
+def _logits_to_score(output: torch.Tensor) -> float:
+    flat = output.detach().float().reshape(output.shape[0], -1)
+    if flat.shape[1] == 1:
+        score = torch.sigmoid(flat[0, 0]).item()
+    else:
+        score = torch.softmax(flat[0, :2], dim=0)[1].item()
+    return float(max(0.0, min(1.0, score)))
+
+
+def _score_with_breakdown(
+    model: Any, input_tensor: torch.Tensor, image_bytes: bytes
+) -> tuple[float, dict[str, float] | None]:
+    """최종 점수와 관점별 실제 세부 점수(가능하면)를 함께 계산합니다."""
+    if hasattr(model, "forward_breakdown"):
+        try:
+            with torch.no_grad():
+                final_logits, parts = model.forward_breakdown(input_tensor)
+            score = _logits_to_score(final_logits)
+            breakdown = {key: _logits_to_score(value) for key, value in parts.items()}
+            return score, breakdown
+        except Exception:  # noqa: BLE001 - 세부 점수 실패가 전체 분석을 막지 않도록 함
+            pass
+    return _score_model(model, input_tensor, image_bytes), None
 
 
 def _score_model(model: Any, input_tensor: torch.Tensor, image_bytes: bytes) -> float:

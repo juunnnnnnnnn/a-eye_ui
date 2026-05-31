@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+models/*.pt
+models/*.pth
+models/*.onnx
+models/*.safetensors
+*.log
+.DS_Store

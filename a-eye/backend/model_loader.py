@@ -26,6 +26,34 @@ def read_model_path() -> str:
     return os.getenv("MODEL_PATH", "./models/best.pt")
 
 
+def ensure_model_file(model_path: Optional[str] = None) -> None:
+    """모델 파일이 없고 MODEL_URL 이 설정돼 있으면 시작 시 한 번 내려받습니다.
+
+    737MB 모델 가중치는 git 저장소에 올리지 않으므로, 클라우드 배포 시
+    Hugging Face Hub / S3 / 직접 링크 등의 MODEL_URL 에서 받아오도록 합니다.
+    """
+    import urllib.request
+
+    path = Path(model_path or read_model_path())
+    if path.exists() and path.stat().st_size > 0:
+        return
+    url = os.getenv("MODEL_URL", "").strip()
+    if not url:
+        logger.warning("MODEL_URL 이 없고 %s 도 없습니다. MOCK 모드로 동작합니다.", path)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("모델 다운로드 시작: %s -> %s", url, path)
+    tmp = path.with_suffix(path.suffix + ".part")
+    try:
+        urllib.request.urlretrieve(url, tmp)  # noqa: S310 - 운영자가 지정한 신뢰된 URL
+        tmp.replace(path)
+        logger.info("모델 다운로드 완료: %s (%d bytes)", path, path.stat().st_size)
+    except Exception:
+        logger.exception("모델 다운로드 실패")
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+
+
 def read_input_size() -> int:
     raw = os.getenv("INPUT_SIZE", "224")
     try:

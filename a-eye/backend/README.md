@@ -1,3 +1,13 @@
+---
+title: A-EYE Backend
+emoji: 🧠
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+app_port: 8000
+pinned: false
+---
+
 # A-EYE 백엔드
 
 FastAPI 기반 이미지 판별 서버입니다. `MODEL_PATH` 파일이 없거나 비어 있으면 MOCK 모드로 실행되어 앱 end-to-end 테스트가 가능합니다.

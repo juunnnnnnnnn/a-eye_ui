@@ -5,7 +5,10 @@ import type { HistoryItem } from "@/lib/types";
 export const STORAGE_KEYS = {
   backendUrl: "aeye.backendUrl",
   history: "aeye.history",
-  pendingResult: "aeye.pendingResult"
+  pendingResult: "aeye.pendingResult",
+  consent: "aeye.consentAccepted",
+  onboarding: "aeye.onboardingDone",
+  autoSave: "aeye.autoSave"
 } as const;
 
 export async function safeGetString(key: string): Promise<string | null> {

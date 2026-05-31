@@ -1,18 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Wordmark } from "@/components/Wordmark";
-import { checkHealth, getVersion } from "@/lib/api";
-import { useBackendUrl } from "@/hooks/useBackendUrl";
+import { SwipeTabs } from "@/components/SwipeTabs";
 import { useHistory } from "@/hooks/useHistory";
-import { safeRemoveItem } from "@/lib/storage";
+import { safeGetString, safeRemoveItem, safeSetString, STORAGE_KEYS } from "@/lib/storage";
 import { useTheme } from "@/lib/theme";
 import type { ThemeMode } from "@/lib/theme";
 import type { ColorTokens } from "@/constants/colors";
+import type { DocTopic } from "@/constants/legal";
 
 const ONBOARDING_KEY = "aeye.onboardingDone";
+
+function openDoc(topic: DocTopic) {
+  router.push({ pathname: "/doc", params: { topic } });
+}
 
 function makeStyles(c: ColorTokens) {
   return StyleSheet.create({
@@ -21,8 +25,6 @@ function makeStyles(c: ColorTokens) {
       paddingBottom: 12, paddingHorizontal: 20, paddingTop: 8
     },
     appBarRight: { alignItems: "center", flexDirection: "row", gap: 10 },
-    connOk: { color: c.real },
-    connStatus: { color: c.muted, fontSize: 12, fontWeight: "500", marginTop: 4 },
     container: { padding: 20, paddingBottom: 120 },
     footer: { alignItems: "center", marginTop: 20 },
     footerTitle: { color: c.muted, fontSize: 11, fontWeight: "400" },
@@ -33,12 +35,12 @@ function makeStyles(c: ColorTokens) {
     },
     knobOff: { left: 2 },
     knobOn: { left: 18 },
-    onLabel: { color: c.fg, fontSize: 11, fontWeight: "600" },
     row: {
       alignItems: "center", flexDirection: "row", gap: 12,
       paddingHorizontal: 14, paddingVertical: 13
     },
     rowBorder: { borderBottomColor: c.border, borderBottomWidth: 1 },
+    rowIcon: { alignItems: "center", borderRadius: 10, height: 32, justifyContent: "center", width: 32 },
     rowLabel: { color: c.fg, fontSize: 13, fontWeight: "600", lineHeight: 18 },
     rowSub: { color: c.muted, fontSize: 11, lineHeight: 16, marginTop: 2 },
     rowText: { flex: 1 },
@@ -51,11 +53,6 @@ function makeStyles(c: ColorTokens) {
       color: c.muted, fontSize: 10, fontWeight: "600", letterSpacing: 1.2,
       marginBottom: 8, marginLeft: 4, textTransform: "uppercase"
     },
-    testBtn: {
-      backgroundColor: c.primary, borderRadius: 12,
-      marginTop: 8, paddingVertical: 11, alignItems: "center"
-    },
-    testBtnText: { color: "#fff", fontSize: 13, fontWeight: "600" },
     themeBtnActive: {
       backgroundColor: "rgba(91,107,255,0.12)",
       borderColor: c.primary, borderWidth: 1.5
@@ -79,14 +76,7 @@ function makeStyles(c: ColorTokens) {
       shadowRadius: 2, top: 2, width: 20
     },
     toggleOff: { backgroundColor: c.surface2, borderColor: c.border, borderWidth: 1 },
-    toggleOn: { backgroundColor: c.primary },
-    urlInput: {
-      backgroundColor: c.surface2, borderColor: c.border, borderRadius: 12,
-      borderWidth: 1, color: c.fg, fontSize: 13, fontWeight: "600",
-      marginTop: 8, paddingHorizontal: 14, paddingVertical: 12
-    },
-    urlLabel: { color: c.fg, fontSize: 13, fontWeight: "600" },
-    urlSection: { gap: 0, padding: 14 }
+    toggleOn: { backgroundColor: c.primary }
   });
 }
 
@@ -99,21 +89,40 @@ function SectionCard({ children, style }: { children: React.ReactNode; style: Re
 }
 
 function SettingsRow({
-  label, sub, trailing, destructive, isLast, style, colors
+  label, sub, icon, trailing, destructive, isLast, onPress, style, colors
 }: {
-  label: string; sub?: string; trailing?: React.ReactNode;
-  destructive?: boolean; isLast?: boolean;
+  label: string; sub?: string; icon?: keyof typeof Ionicons.glyphMap; trailing?: React.ReactNode;
+  destructive?: boolean; isLast?: boolean; onPress?: () => void;
   style: ReturnType<typeof makeStyles>; colors: ColorTokens;
 }) {
-  return (
-    <View style={[style.row, !isLast && style.rowBorder]}>
+  const tint = destructive ? colors.ai : colors.primary;
+  const content = (
+    <>
+      {icon ? (
+        <View style={[style.rowIcon, { backgroundColor: destructive ? colors.aiSoft : "rgba(91,107,255,0.1)" }]}>
+          <Ionicons name={icon} size={17} color={tint} />
+        </View>
+      ) : null}
       <View style={style.rowText}>
         <Text style={[style.rowLabel, destructive && { color: colors.ai }]}>{label}</Text>
         {sub ? <Text style={style.rowSub}>{sub}</Text> : null}
       </View>
       <View>{trailing}</View>
-    </View>
+    </>
   );
+  if (onPress) {
+    return (
+      <Pressable
+        style={[style.row, !isLast && style.rowBorder]}
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+      >
+        {content}
+      </Pressable>
+    );
+  }
+  return <View style={[style.row, !isLast && style.rowBorder]}>{content}</View>;
 }
 
 function Toggle({ on, onToggle, style }: { on: boolean; onToggle: () => void; style: ReturnType<typeof makeStyles> }) {
@@ -127,24 +136,21 @@ function Toggle({ on, onToggle, style }: { on: boolean; onToggle: () => void; st
 export default function SettingsScreen() {
   const { colors, mode, setMode } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const { backendUrl, setBackendUrl } = useBackendUrl();
   const { deleteAll } = useHistory();
-  const [urlInput, setUrlInput] = useState(backendUrl);
-  const [connection, setConnection] = useState<string | null>(null);
   const [autoSave, setAutoSave] = useState(true);
-  const [includeOriginal, setIncludeOriginal] = useState(false);
 
-  useEffect(() => { setUrlInput(backendUrl); }, [backendUrl]);
+  useEffect(() => {
+    void safeGetString(STORAGE_KEYS.autoSave).then((v) => {
+      if (v != null) setAutoSave(v === "1");
+    });
+  }, []);
 
-  const testConnection = async () => {
-    try {
-      await setBackendUrl(urlInput);
-      await checkHealth(urlInput);
-      const v = await getVersion(urlInput);
-      setConnection(`연결 정상 · ${v.model_version}`);
-    } catch {
-      setConnection("연결 실패");
-    }
+  const toggleAutoSave = () => {
+    setAutoSave((prev) => {
+      const next = !prev;
+      void safeSetString(STORAGE_KEYS.autoSave, next ? "1" : "0");
+      return next;
+    });
   };
 
   const clearAll = () => {
@@ -166,6 +172,7 @@ export default function SettingsScreen() {
   ];
 
   return (
+    <SwipeTabs index={2}>
     <SafeAreaView style={styles.safe}>
       <View style={styles.appBar}>
         <Wordmark />
@@ -205,30 +212,17 @@ export default function SettingsScreen() {
           <SettingsRow
             label="히스토리 자동 저장"
             sub="분석 완료 후 기록 탭에 자동 보관"
-            trailing={<Toggle on={autoSave} onToggle={() => setAutoSave((p) => !p)} style={styles} />}
-            style={styles} colors={colors}
-          />
-          <SettingsRow
-            label="저장 시 원본 표시 유지"
-            sub="결과 화면에서 업로드 소스 힌트 유지"
-            trailing={<Toggle on={includeOriginal} onToggle={() => setIncludeOriginal((p) => !p)} style={styles} />}
-            style={styles} colors={colors}
-          />
-          <SettingsRow
-            label="XAI 히트맵 표시"
-            sub="결과 화면에서 의심 영역을 시각화"
-            trailing={<Text style={styles.onLabel}>ON</Text>}
+            icon="save-outline"
+            trailing={<Toggle on={autoSave} onToggle={toggleAutoSave} style={styles} />}
             style={styles} colors={colors}
           />
           <SettingsRow
             label="기록 전체 삭제"
+            icon="trash-outline"
             destructive
             isLast
-            trailing={
-              <Pressable onPress={clearAll}>
-                <Ionicons name="chevron-forward" size={16} color={colors.ai} />
-              </Pressable>
-            }
+            onPress={clearAll}
+            trailing={<Ionicons name="chevron-forward" size={16} color={colors.ai} />}
             style={styles} colors={colors}
           />
         </SectionCard>
@@ -239,55 +233,63 @@ export default function SettingsScreen() {
           <SettingsRow
             label="분석 엔진 정보"
             sub="구조 / 맥락 / 디테일 3축 앙상블"
+            icon="layers-outline"
+            onPress={() => openDoc("engine")}
             trailing={<Ionicons name="chevron-forward" size={16} color={colors.muted} />}
             style={styles} colors={colors}
           />
           <SettingsRow
             label="의심 영역 기준"
             sub="경계선, 질감, 배경 패턴 변화를 종합"
+            icon="scan-outline"
+            onPress={() => openDoc("criteria")}
             trailing={<Ionicons name="chevron-forward" size={16} color={colors.muted} />}
             style={styles} colors={colors}
           />
           <SettingsRow
             label="데이터 보관"
             sub="분석 기록은 이 기기에 저장"
+            icon="lock-closed-outline"
+            onPress={() => openDoc("data")}
             trailing={<Ionicons name="chevron-forward" size={16} color={colors.muted} />}
             style={styles} colors={colors}
           />
           <SettingsRow
             label="온보딩 다시 보기"
             sub="앱 소개 화면을 처음부터 다시 봅니다"
+            icon="play-circle-outline"
             isLast
-            trailing={
-              <Pressable onPress={() => void resetOnboarding()}>
-                <Ionicons name="chevron-forward" size={16} color={colors.muted} />
-              </Pressable>
-            }
+            onPress={() => void resetOnboarding()}
+            trailing={<Ionicons name="chevron-forward" size={16} color={colors.muted} />}
             style={styles} colors={colors}
           />
         </SectionCard>
 
-        {/* Backend connection */}
-        <SectionLabel label="연결 설정" style={styles} />
+        {/* Legal */}
+        <SectionLabel label="약관 및 정책" style={styles} />
         <SectionCard style={styles}>
-          <View style={styles.urlSection}>
-            <Text style={styles.urlLabel}>백엔드 주소</Text>
-            <TextInput
-              autoCapitalize="none"
-              autoCorrect={false}
-              onChangeText={setUrlInput}
-              placeholder="http://서버주소:8000"
-              placeholderTextColor={colors.muted}
-              style={styles.urlInput}
-              value={urlInput}
-            />
-            <Pressable style={styles.testBtn} onPress={() => void testConnection()}>
-              <Text style={styles.testBtnText}>연결 테스트</Text>
-            </Pressable>
-            {connection ? (
-              <Text style={[styles.connStatus, connection.includes("정상") && styles.connOk]}>{connection}</Text>
-            ) : null}
-          </View>
+          <SettingsRow
+            label="이용약관"
+            icon="document-text-outline"
+            onPress={() => openDoc("terms")}
+            trailing={<Ionicons name="chevron-forward" size={16} color={colors.muted} />}
+            style={styles} colors={colors}
+          />
+          <SettingsRow
+            label="개인정보 처리방침"
+            icon="shield-checkmark-outline"
+            onPress={() => openDoc("privacy")}
+            trailing={<Ionicons name="chevron-forward" size={16} color={colors.muted} />}
+            style={styles} colors={colors}
+          />
+          <SettingsRow
+            label="오픈소스 라이선스"
+            icon="code-slash-outline"
+            isLast
+            onPress={() => openDoc("opensource")}
+            trailing={<Ionicons name="chevron-forward" size={16} color={colors.muted} />}
+            style={styles} colors={colors}
+          />
         </SectionCard>
 
         <View style={styles.footer}>
@@ -296,5 +298,6 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
     </SafeAreaView>
+    </SwipeTabs>
   );
 }

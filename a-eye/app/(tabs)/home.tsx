@@ -7,16 +7,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Wordmark } from "@/components/Wordmark";
+import { SwipeTabs } from "@/components/SwipeTabs";
 import { makeImageName, resizeForAnalysis } from "@/lib/image";
 import { useHistory } from "@/hooks/useHistory";
 import { useTheme } from "@/lib/theme";
 import type { ColorTokens } from "@/constants/colors";
-import type { HistoryItem } from "@/lib/types";
-
-function verdictTitle(item: HistoryItem) {
-  const pct = Math.round(item.score * 100);
-  return item.verdict === "AI" ? `${pct}% · AI 생성 가능성 높음` : `${100 - pct}% · 실사 가능성 높음`;
-}
 
 function makeStyles(c: ColorTokens) {
   return StyleSheet.create({
@@ -27,53 +22,83 @@ function makeStyles(c: ColorTokens) {
     appBarRight: { alignItems: "center", flexDirection: "row", gap: 10 },
     container: { padding: 20, paddingBottom: 120 },
     empty: {
-      backgroundColor: c.surface, borderColor: c.border,
-      borderRadius: 14, borderWidth: 1, padding: 14
+      alignItems: "center", backgroundColor: c.surface, borderColor: c.border,
+      borderRadius: 18, borderWidth: 1, gap: 12, paddingHorizontal: 18, paddingVertical: 28
     },
-    emptyText: { color: c.muted, fontSize: 12, lineHeight: 18, fontWeight: "500" },
+    emptyIcon: {
+      alignItems: "center", backgroundColor: c.surface2, borderRadius: 999,
+      height: 48, justifyContent: "center", width: 48
+    },
+    emptyText: { color: c.muted, fontSize: 13, fontWeight: "500", lineHeight: 19, textAlign: "center" },
     iconBtn: {
       alignItems: "center", backgroundColor: c.surface2, borderColor: c.border,
       borderRadius: 12, borderWidth: 1, height: 36, justifyContent: "center", width: 36
     },
+    // ── 히어로 카드 ──
+    heroCard: {
+      borderRadius: 24, overflow: "hidden", padding: 20,
+      shadowColor: "#5B6BFF", shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: 0.32, shadowRadius: 20
+    },
+    heroGlow: {
+      position: "absolute", right: -40, top: -50, width: 160, height: 160,
+      borderRadius: 999, backgroundColor: "rgba(255,255,255,0.14)"
+    },
+    heroTop: { alignItems: "center", flexDirection: "row", gap: 14 },
+    heroGlyph: {
+      alignItems: "center", backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 16,
+      height: 52, justifyContent: "center", width: 52
+    },
+    heroTitle: { color: "#fff", fontSize: 19, fontWeight: "800", letterSpacing: -0.4 },
+    heroSub: { color: "rgba(255,255,255,0.86)", fontSize: 13, fontWeight: "500", marginTop: 3 },
+    heroButtons: { flexDirection: "row", gap: 10, marginTop: 18 },
+    heroBtn: {
+      alignItems: "center", backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 14,
+      flex: 1, flexDirection: "row", gap: 7, justifyContent: "center", paddingVertical: 13
+    },
+    heroBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+    // ── 통계 ──
+    statsRow: { flexDirection: "row", gap: 10, marginTop: 14 },
+    statChip: {
+      alignItems: "center", backgroundColor: c.surface, borderColor: c.border,
+      borderRadius: 16, borderWidth: 1, flex: 1, paddingVertical: 14
+    },
+    statValue: { fontSize: 22, fontWeight: "800", letterSpacing: -0.5 },
+    statLabel: { color: c.muted, fontSize: 11, fontWeight: "600", marginTop: 3 },
+    // ── 최근 분석 ──
     recentInfo: { flex: 1, minWidth: 0 },
     recentList: { gap: 10 },
-    recentName: { color: c.fg, fontSize: 12, fontWeight: "600", lineHeight: 16 },
+    recentMeta: { alignItems: "center", flexDirection: "row", gap: 8, marginTop: 7 },
+    recentName: { color: c.fg, fontSize: 13, fontWeight: "700", lineHeight: 17 },
+    recentPct: { fontSize: 13, fontWeight: "800" },
     recentRow: {
       alignItems: "center", backgroundColor: c.surface, borderColor: c.border,
-      borderRadius: 14, borderWidth: 1, flexDirection: "row",
+      borderRadius: 18, borderWidth: 1, flexDirection: "row",
       gap: 12, overflow: "hidden", padding: 12
     },
-    recentScore: { fontSize: 11, fontWeight: "500", marginTop: 4 },
     recentThumb: {
       backgroundColor: c.surface2, borderColor: c.border,
-      borderRadius: 12, borderWidth: 1, height: 54, width: 54
+      borderRadius: 14, borderWidth: 1, height: 56, width: 56
+    },
+    pillDot: { borderRadius: 999, height: 6, width: 6 },
+    pillText: { fontSize: 11, fontWeight: "700" },
+    verdictPill: {
+      alignItems: "center", borderRadius: 999, flexDirection: "row",
+      gap: 5, paddingHorizontal: 9, paddingVertical: 4
     },
     safe: { backgroundColor: c.bg, flex: 1 },
     sectionHeader: {
       alignItems: "center", flexDirection: "row", justifyContent: "space-between",
-      marginBottom: 10, marginTop: 22
+      marginBottom: 12, marginTop: 26
     },
-    sectionTitle: { color: c.fg, fontSize: 14, fontWeight: "600" },
+    sectionTitle: { color: c.fg, fontSize: 15, fontWeight: "700" },
     seeAll: { alignItems: "center", flexDirection: "row", gap: 4 },
     seeAllText: { color: c.muted, fontSize: 12, fontWeight: "500" },
     title: {
-      color: c.fg, fontSize: 26, fontWeight: "700",
+      color: c.fg, fontSize: 26, fontWeight: "800",
       letterSpacing: -0.8, lineHeight: 32, marginBottom: 18, marginTop: 8
     },
-    titleAccent: { color: c.primary },
-    uploadBtn: {
-      alignItems: "center", backgroundColor: c.surface2, borderColor: c.border,
-      borderRadius: 12, borderWidth: 1, flex: 1, flexDirection: "row",
-      gap: 6, justifyContent: "center", paddingVertical: 11
-    },
-    uploadBtnText: { color: c.fg, fontSize: 13, fontWeight: "600" },
-    uploadButtons: { flexDirection: "row", gap: 8, marginTop: 6, width: "100%" },
-    uploadCard: {
-      alignItems: "center", borderColor: c.borderStrong, borderRadius: 20,
-      borderStyle: "dashed", borderWidth: 1.5, gap: 10, padding: 22
-    },
-    uploadIconBox: { alignItems: "center", borderRadius: 18, height: 58, justifyContent: "center", width: 58 },
-    uploadText: { color: c.fg, fontSize: 14, fontWeight: "600", lineHeight: 20, textAlign: "center" }
+    titleAccent: { color: c.primary }
   });
 }
 
@@ -82,6 +107,11 @@ export default function HomeScreen() {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { items } = useHistory();
   const recent = useMemo(() => items.slice(0, 3), [items]);
+  const stats = useMemo(() => {
+    const total = items.length;
+    const ai = items.filter((i) => i.verdict === "AI").length;
+    return { total, ai, real: total - ai };
+  }, [items]);
 
   const pickFromGallery = async () => {
     try {
@@ -119,6 +149,7 @@ export default function HomeScreen() {
   };
 
   return (
+    <SwipeTabs index={0}>
     <SafeAreaView style={styles.safe}>
       <View style={styles.appBar}>
         <Wordmark navigable={false} />
@@ -135,46 +166,73 @@ export default function HomeScreen() {
           <Text style={styles.titleAccent}>가려내볼까요?</Text>
         </Text>
 
-        <View style={styles.uploadCard}>
-          <LinearGradient
-            colors={["#06B6D4", "#5B6BFF"]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.uploadIconBox}
-          >
-            <Ionicons name="cloud-upload-outline" size={26} color="#fff" />
-          </LinearGradient>
-          <Text style={styles.uploadText}>
-            이미지를 선택하거나, 촬영하거나,{"\n"}공유받으세요
-          </Text>
-          <View style={styles.uploadButtons}>
-            <Pressable style={styles.uploadBtn} onPress={() => router.push("/camera")}>
-              <Ionicons name="camera-outline" size={16} color={colors.fg} />
-              <Text style={styles.uploadBtnText}>촬영</Text>
+        {/* 분석 시작 히어로 카드 */}
+        <View style={styles.heroCard}>
+          <LinearGradient colors={["#06B6D4", "#5B6BFF"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+          <View style={styles.heroGlow} />
+          <View style={styles.heroTop}>
+            <View style={styles.heroGlyph}>
+              <Ionicons name="sparkles" size={24} color="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.heroTitle}>이미지 분석 시작</Text>
+              <Text style={styles.heroSub}>촬영하거나 갤러리에서 골라보세요</Text>
+            </View>
+          </View>
+          <View style={styles.heroButtons}>
+            <Pressable style={styles.heroBtn} onPress={() => router.push("/camera")}>
+              <Ionicons name="camera" size={17} color="#fff" />
+              <Text style={styles.heroBtnText}>촬영</Text>
             </Pressable>
-            <Pressable style={styles.uploadBtn} onPress={() => void pickFromGallery()}>
-              <Ionicons name="image-outline" size={16} color={colors.fg} />
-              <Text style={styles.uploadBtnText}>갤러리</Text>
+            <Pressable style={styles.heroBtn} onPress={() => void pickFromGallery()}>
+              <Ionicons name="images" size={16} color="#fff" />
+              <Text style={styles.heroBtnText}>갤러리</Text>
             </Pressable>
           </View>
         </View>
 
+        {/* 분석 통계 */}
+        {stats.total > 0 && (
+          <View style={styles.statsRow}>
+            <View style={styles.statChip}>
+              <Text style={[styles.statValue, { color: colors.fg }]}>{stats.total}</Text>
+              <Text style={styles.statLabel}>총 분석</Text>
+            </View>
+            <View style={styles.statChip}>
+              <Text style={[styles.statValue, { color: colors.ai }]}>{stats.ai}</Text>
+              <Text style={styles.statLabel}>AI 생성</Text>
+            </View>
+            <View style={styles.statChip}>
+              <Text style={[styles.statValue, { color: colors.real }]}>{stats.real}</Text>
+              <Text style={styles.statLabel}>실사</Text>
+            </View>
+          </View>
+        )}
+
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>최근 분석</Text>
-          <Pressable onPress={() => router.push("/(tabs)/history")} style={styles.seeAll}>
-            <Text style={styles.seeAllText}>전체 보기</Text>
-            <Ionicons name="chevron-forward" size={12} color={colors.muted} />
-          </Pressable>
+          {recent.length > 0 && (
+            <Pressable onPress={() => router.push("/(tabs)/history")} style={styles.seeAll}>
+              <Text style={styles.seeAllText}>전체 보기</Text>
+              <Ionicons name="chevron-forward" size={12} color={colors.muted} />
+            </Pressable>
+          )}
         </View>
 
         {recent.length === 0 ? (
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>아직 기록이 없습니다. 예시 이미지나 파일을 선택해서 첫 분석을 시작해보세요.</Text>
+            <View style={styles.emptyIcon}>
+              <Ionicons name="image-outline" size={22} color={colors.muted} />
+            </View>
+            <Text style={styles.emptyText}>아직 분석 기록이 없어요.{"\n"}위에서 첫 이미지를 분석해보세요.</Text>
           </View>
         ) : (
           <View style={styles.recentList}>
             {recent.map((item) => {
-              const statusColor = item.verdict === "AI" ? colors.ai : colors.real;
+              const isAi = item.verdict === "AI";
+              const statusColor = isAi ? colors.ai : colors.real;
+              const statusSoft = isAi ? colors.aiSoft : colors.realSoft;
+              const pct = isAi ? Math.round(item.score * 100) : Math.round((1 - item.score) * 100);
               return (
                 <Pressable
                   key={item.id}
@@ -184,8 +242,15 @@ export default function HomeScreen() {
                   <Image source={{ uri: item.imageUri }} style={styles.recentThumb} contentFit="cover" />
                   <View style={styles.recentInfo}>
                     <Text style={styles.recentName} numberOfLines={1}>{item.imageName}</Text>
-                    <Text style={[styles.recentScore, { color: statusColor }]}>{verdictTitle(item)}</Text>
+                    <View style={styles.recentMeta}>
+                      <View style={[styles.verdictPill, { backgroundColor: statusSoft }]}>
+                        <View style={[styles.pillDot, { backgroundColor: statusColor }]} />
+                        <Text style={[styles.pillText, { color: statusColor }]}>{isAi ? "AI 생성" : "실사"}</Text>
+                      </View>
+                      <Text style={[styles.recentPct, { color: statusColor }]}>{pct}%</Text>
+                    </View>
                   </View>
+                  <Ionicons name="chevron-forward" size={16} color={colors.muted} />
                 </Pressable>
               );
             })}
@@ -193,5 +258,6 @@ export default function HomeScreen() {
         )}
       </ScrollView>
     </SafeAreaView>
+    </SwipeTabs>
   );
 }

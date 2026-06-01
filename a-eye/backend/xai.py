@@ -4,7 +4,9 @@ from typing import Any, Optional
 
 import numpy as np
 import torch
-from PIL import Image
+import torch.nn as nn
+import torch.nn.functional as F
+from PIL import Image, ImageDraw, ImageFilter
 
 CAM_SIZE = 224
 
@@ -41,18 +43,6 @@ def overlay_heatmap(original: Image.Image, heatmap: Image.Image, alpha: float = 
     return Image.blend(base, heat, alpha).convert("RGB")
 
 
-# ─── ViT/CLIP 토큰 출력을 공간 특징맵으로 변환 ────────────────────────
-# 트랜스포머 레이어 출력은 [B, tokens, C] 형태이므로 CLS 토큰을 제거하고
-# [B, C, H, W] 격자로 reshape 해야 GradCAM 이 공간 히트맵을 만들 수 있습니다.
-
-def _vit_reshape_transform(tensor: torch.Tensor) -> torch.Tensor:
-    tokens = tensor[:, 1:, :]
-    b, n, c = tokens.shape
-    side = int(round(n ** 0.5))
-    tokens = tokens.reshape(b, side, side, c)
-    return tokens.permute(0, 3, 1, 2)
-
-
 def _resolve_attr(model: Any, path: str) -> Optional[Any]:
     obj: Any = model
     for part in path.split("."):
@@ -72,84 +62,259 @@ def _resolve_attr(model: Any, path: str) -> Optional[Any]:
     return obj
 
 
-def find_target_layer(model: Any) -> tuple[Optional[Any], bool]:
-    """(target_layer, needs_reshape) 를 반환합니다.
+def _normalize_map(cam: np.ndarray) -> np.ndarray:
+    cam = np.nan_to_num(cam.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    cam -= float(cam.min())
+    peak = float(cam.max())
+    if peak <= 1e-7:
+        return np.zeros_like(cam, dtype=np.float32)
+    return np.clip(cam / peak, 0.0, 1.0)
 
-    A-EYE 하이브리드 모델에서 의심 영역 시각화에 가장 적합한 타겟은
-    공간 정보를 유지하며 최종 판단에 기여하는 컨볼루션 브랜치입니다.
 
-    - srm_branch(노이즈 잔차): 이미지 공간의 위·변조 흔적에 반응 → 1순위
-    - fft_branch(주파수): 생성 모델 특유의 주파수 패턴 → 2순위
-    - clip_encoder fc2: 트랜스포머(요청 시), CLS-only 풀링이면 신호가 약함 → 폴백
+def _normalize_cam_pct(cam: np.ndarray) -> np.ndarray:
+    """xai0530 style: percentile normalization + gamma for clearer hot spots."""
+    cam = np.maximum(np.nan_to_num(cam.astype(np.float32)), 0.0)
+    p5, p95 = np.percentile(cam, [5, 95])
+    denom = max(float(p95 - p5), 1e-6)
+    return np.power(np.clip((cam - p5) / denom, 0.0, 1.0), 0.75)
 
-    (CLIP/ViT 브랜치는 CLS 토큰만 출력에 사용하므로 패치 토큰 기반
-     GradCAM 이 사실상 무의미해, 공간 컨볼루션 브랜치를 우선합니다.)
-    """
-    srm = _resolve_attr(model, "srm_branch.encoder")
-    if srm is not None:
-        return srm, False
 
-    fft = _resolve_attr(model, "fft_branch.conv")
-    if fft is not None:
-        return fft, False
+def _last_conv(module: nn.Module | None) -> nn.Conv2d | None:
+    if module is None:
+        return None
+    for child in reversed(list(module.modules())):
+        if isinstance(child, nn.Conv2d):
+            return child
+    return None
 
-    clip_fc2 = _resolve_attr(
+
+def _vit_token_target(model: nn.Module) -> nn.Module | None:
+    vit = getattr(model, "vit_encoder", None)
+    backbone = getattr(vit, "backbone", None)
+    encoder = getattr(backbone, "encoder", None)
+    layers = getattr(encoder, "layers", None)
+    if layers is None:
+        return None
+    try:
+        return layers[-1]
+    except Exception:
+        children = list(layers.children())
+        return children[-1] if children else None
+
+
+def _clip_token_target(model: nn.Module) -> nn.Module | None:
+    target = _resolve_attr(
         model, "clip_encoder.vision_model.vision_model.encoder.layers[-1].mlp.fc2"
     )
-    if clip_fc2 is not None:
-        return clip_fc2, True
-
-    if not hasattr(model, "named_modules"):
-        return None, False
-    modules = list(model.named_modules())
-    for name, module in reversed(modules):
-        lowered = name.lower()
-        if any(token in lowered for token in ("layer4", "conv", "blocks")):
-            return module, False
-    return (modules[-1][1] if modules else None), False
+    return target if isinstance(target, nn.Module) else None
 
 
-def _colorize_cam(grayscale: np.ndarray) -> np.ndarray:
-    """0~1 CAM 을 JET 컬러맵 RGB 이미지(uint8)로 변환."""
-    gray_u8 = np.uint8(255 * np.clip(grayscale, 0, 1))
+def _xai0530_targets(model: nn.Module) -> list[tuple[str, str, nn.Module]]:
+    targets: list[tuple[str, str, nn.Module]] = []
+
+    clip_target = _clip_token_target(model)
+    if clip_target is not None:
+        targets.append(("clip_patch_gradcam", "tokens", clip_target))
+
+    vit_target = _vit_token_target(model)
+    if vit_target is not None:
+        targets.append(("vit_patch_gradcam", "tokens", vit_target))
+
+    srm = getattr(model, "srm_branch", None)
+    srm_target = _last_conv(getattr(srm, "encoder", None))
+    if srm_target is not None:
+        targets.append(("srm_residual_gradcam", "conv", srm_target))
+
+    return targets
+
+
+def _cam_from_conv(
+    activation: torch.Tensor, gradient: torch.Tensor, size: tuple[int, int]
+) -> np.ndarray | None:
+    if activation.ndim != 4 or gradient.ndim != 4:
+        return None
+    weights = gradient.mean(dim=(2, 3), keepdim=True)
+    cam = F.relu((activation * weights).sum(dim=1, keepdim=True))
+    cam = F.interpolate(cam, size=size, mode="bilinear", align_corners=False)
+    return _normalize_map(cam[0, 0].detach().float().cpu().numpy())
+
+
+def _cam_from_tokens(
+    activation: torch.Tensor, gradient: torch.Tensor, size: tuple[int, int]
+) -> np.ndarray | None:
+    if activation.ndim != 3 or gradient.ndim != 3 or activation.shape[1] < 2:
+        return None
+
+    tokens = activation[:, 1:, :]
+    grads = gradient[:, 1:, :]
+    patch_count = tokens.shape[1]
+    grid = int(round(patch_count ** 0.5))
+    if grid * grid != patch_count:
+        return None
+
+    weights = grads.mean(dim=1, keepdim=True)
+    cam = F.relu((tokens * weights).sum(dim=-1)).view(activation.shape[0], 1, grid, grid)
+    cam = F.interpolate(cam, size=size, mode="bilinear", align_corners=False)
+    return _normalize_map(cam[0, 0].detach().float().cpu().numpy())
+
+
+def _input_gradient_map(tensor: torch.Tensor, size: tuple[int, int]) -> np.ndarray | None:
+    grad = tensor.grad
+    if grad is None or grad.ndim != 4:
+        return None
+    cam = grad.detach().float().abs().mean(dim=1, keepdim=True)
+    cam = F.interpolate(cam, size=size, mode="bilinear", align_corners=False)
+    return _normalize_map(cam[0, 0].cpu().numpy())
+
+
+def _forward_logits(model: nn.Module, tensor: torch.Tensor) -> torch.Tensor:
+    output = model(tensor)
+    return output["logits"] if isinstance(output, dict) else output
+
+
+def _fallback_residual_map(rgb: Image.Image, size: tuple[int, int]) -> np.ndarray:
+    small = rgb.resize((size[1], size[0]), Image.Resampling.BICUBIC).convert("L")
+    blur = small.filter(ImageFilter.GaussianBlur(radius=2.4))
+    arr = np.asarray(small, dtype=np.float32) / 255.0
+    low = np.asarray(blur, dtype=np.float32) / 255.0
+    return _normalize_map(np.abs(arr - low))
+
+
+def _jet_colormap(cam: np.ndarray) -> np.ndarray:
+    x = np.clip(cam, 0.0, 1.0)
+    r = np.clip(1.5 - np.abs(4.0 * x - 3.0), 0.0, 1.0)
+    g = np.clip(1.5 - np.abs(4.0 * x - 2.0), 0.0, 1.0)
+    b = np.clip(1.5 - np.abs(4.0 * x - 1.0), 0.0, 1.0)
+    return np.stack([r, g, b], axis=-1)
+
+
+def _show_cam_on_image(
+    rgb: Image.Image, cam: np.ndarray, image_weight: float = 0.55
+) -> tuple[Image.Image, Image.Image]:
+    img = np.asarray(rgb.convert("RGB"), dtype=np.float32) / 255.0
+    cam_img = Image.fromarray(np.uint8(_normalize_map(cam) * 255), "L").resize(
+        rgb.size, Image.Resampling.BICUBIC
+    )
+    cam_img = cam_img.filter(ImageFilter.GaussianBlur(max(2.0, min(rgb.size) / 90.0)))
+    cam_full = _normalize_map(np.asarray(cam_img, dtype=np.float32) / 255.0)
+    jet = _jet_colormap(cam_full)
+    overlay = np.clip(image_weight * img + (1.0 - image_weight) * jet, 0.0, 1.0)
+    return (
+        Image.fromarray(np.uint8(jet * 255), "RGB"),
+        Image.fromarray(np.uint8(overlay * 255), "RGB"),
+    )
+
+
+def _localized_overlay(rgb: Image.Image, cam: np.ndarray, is_fake: bool) -> Image.Image:
+    width, height = rgb.size
+    img = np.asarray(rgb.convert("RGB"), dtype=np.float32) / 255.0
+    cam_img = Image.fromarray(np.uint8(_normalize_map(cam) * 255), "L").resize(
+        (width, height), Image.Resampling.BICUBIC
+    )
+    cam_img = cam_img.filter(ImageFilter.GaussianBlur(max(2.0, min(width, height) / 90.0)))
+    camf = _normalize_map(np.asarray(cam_img, dtype=np.float32) / 255.0)
+    jet = _jet_colormap(camf)
+    base = np.clip(0.6 * img + 0.4 * jet, 0.0, 1.0)
+    out = Image.fromarray(np.uint8(base * 255), "RGB")
+
+    accent = (239, 68, 68) if is_fake else (16, 185, 129)
+    mask = camf >= 0.55
+    draw = ImageDraw.Draw(out)
+    if int(mask.sum()) > (width * height) * 0.003:
+        ys, xs = np.where(mask)
+        x1, y1, x2, y2 = int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
+        thick = max(2, int(round(min(width, height) / 160)))
+        for k in range(thick):
+            draw.rectangle([x1 - k, y1 - k, x2 + k, y2 + k], outline=accent)
+    return out
+
+
+def _xai0530_images(
+    model: nn.Module, input_tensor: torch.Tensor, original: Image.Image, target_class: int
+) -> tuple[Image.Image, Image.Image]:
+    rgb = original.convert("RGB")
+    targets = _xai0530_targets(model)
+    captured: dict[str, dict[str, torch.Tensor | str]] = {}
+    handles = []
+    was_training = model.training
+
+    def make_hook(name: str, kind: str):
+        def hook(_module: nn.Module, _inputs: tuple[Any, ...], output: Any) -> None:
+            if isinstance(output, (tuple, list)):
+                output = output[0]
+            if not isinstance(output, torch.Tensor) or not output.requires_grad:
+                return
+            captured[name] = {"activation": output, "kind": kind}
+            output.register_hook(lambda grad, key=name: captured[key].__setitem__("gradient", grad))
+
+        return hook
+
     try:
-        import cv2
+        model.eval()
+        for name, kind, module in targets:
+            handles.append(module.register_forward_hook(make_hook(name, kind)))
 
-        colored = cv2.applyColorMap(gray_u8, cv2.COLORMAP_JET)
-        return cv2.cvtColor(colored, cv2.COLOR_BGR2RGB)
-    except Exception:
-        rgb = np.zeros((*gray_u8.shape, 3), dtype=np.uint8)
-        rgb[..., 0] = gray_u8
-        rgb[..., 2] = 255 - gray_u8
-        return rgb
+        tensor = input_tensor.detach().clone().requires_grad_(True)
+        model.zero_grad(set_to_none=True)
+        with torch.enable_grad():
+            logits = _forward_logits(model, tensor)
+            target = logits[:, int(target_class)].sum()
+            target.backward()
+    finally:
+        for handle in handles:
+            handle.remove()
+        model.train(was_training)
+
+    size = tuple(int(v) for v in tensor.shape[-2:])
+    maps: dict[str, np.ndarray] = {}
+    for name, data in captured.items():
+        activation = data.get("activation")
+        gradient = data.get("gradient")
+        kind = data.get("kind")
+        if not isinstance(activation, torch.Tensor) or not isinstance(gradient, torch.Tensor):
+            continue
+        if kind == "tokens":
+            cam = _cam_from_tokens(activation, gradient, size)
+        elif kind == "conv":
+            cam = _cam_from_conv(activation, gradient, size)
+        else:
+            cam = None
+        if cam is not None:
+            maps[name] = cam
+
+    input_map = _input_gradient_map(tensor, size)
+    if input_map is not None:
+        maps["input_gradient"] = input_map
+
+    if not maps:
+        maps["image_highpass_residual"] = _fallback_residual_map(rgb, size)
+
+    chosen: np.ndarray | None = None
+    first_available: np.ndarray | None = None
+    for name in ("clip_patch_gradcam", "vit_patch_gradcam", "srm_residual_gradcam", "input_gradient"):
+        cam = maps.get(name)
+        if cam is None:
+            continue
+        cam = _normalize_map(cam)
+        if first_available is None:
+            first_available = cam
+        if float(cam.std()) >= 0.05:
+            chosen = cam
+            break
+    if chosen is None:
+        chosen = first_available if first_available is not None else _normalize_map(next(iter(maps.values())))
+
+    cam = _normalize_cam_pct(chosen)
+    heatmap, overlay = _show_cam_on_image(rgb, cam, image_weight=0.55)
+    return heatmap, overlay
 
 
 def gradcam_or_fallback(
     model: Any, input_tensor: torch.Tensor, original: Image.Image, score: float
 ) -> tuple[str, str]:
     try:
-        from pytorch_grad_cam import GradCAM
-        from pytorch_grad_cam.utils.image import show_cam_on_image
-        from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
-
-        target_layer, needs_reshape = find_target_layer(model)
-        if target_layer is None:
-            raise RuntimeError("No target layer")
-
-        reshape = _vit_reshape_transform if needs_reshape else None
         target_idx = 1 if score >= 0.5 else 0
-
-        with GradCAM(model=model, target_layers=[target_layer], reshape_transform=reshape) as cam:
-            grayscale = cam(input_tensor=input_tensor, targets=[ClassifierOutputTarget(target_idx)])[0]
-
-        grayscale = np.maximum(grayscale, 0)
-        grayscale = grayscale / (grayscale.max() + 1e-8)
-
-        rgb = np.asarray(original.resize((CAM_SIZE, CAM_SIZE)).convert("RGB"), dtype=np.float32) / 255.0
-        overlay = show_cam_on_image(rgb, grayscale, use_rgb=True, image_weight=0.55)
-        overlay_image = Image.fromarray(np.ascontiguousarray(overlay, dtype=np.uint8))
-
-        heatmap_image = Image.fromarray(_colorize_cam(grayscale))
+        heatmap_image, overlay_image = _xai0530_images(model, input_tensor, original, target_idx)
         return png_b64(heatmap_image), png_b64(overlay_image)
     except Exception:
         heatmap = deterministic_heatmap(score)

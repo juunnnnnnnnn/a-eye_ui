@@ -7,7 +7,7 @@ import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withSeq
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Logo } from "@/components/Logo";
 import { useAnalyze } from "@/hooks/useAnalyze";
-import { safeSetString, STORAGE_KEYS } from "@/lib/storage";
+import { addHistoryItem, safeGetString, safeRemoveItem, safeSetString, STORAGE_KEYS } from "@/lib/storage";
 import { useTheme } from "@/lib/theme";
 import type { ColorTokens } from "@/constants/colors";
 import type { HistoryItem } from "@/lib/types";
@@ -18,10 +18,17 @@ const IMAGE_SIZE = SCREEN_WIDTH - 48;
 type LoadingParams = { imageUri?: string; imageName?: string };
 
 const STEPS = [
-  "이미지 구조 패치 분석",
-  "맥락 일관성 교차 검증",
-  "디테일 판독 및 흔적 탐색",
+  "여러 AI 모델 병렬 추론",
+  "모델 간 교차 검증",
+  "의심 영역(XAI) 시각화",
   "최종 결과 종합"
+];
+
+const TIPS = [
+  "여러 모델이 같은 이미지를 서로 다른 관점으로 검증하고 있어요.",
+  "구조·맥락·디테일을 교차 분석하는 중이에요.",
+  "의심 영역 히트맵을 만들고 있어요.",
+  "정확도를 위해 최대 1분 정도 걸릴 수 있어요."
 ];
 
 function readParam(v: string | string[] | undefined) {
@@ -74,7 +81,9 @@ function makeStyles(c: ColorTokens) {
     stepRow: { alignItems: "center", flexDirection: "row", gap: 12 },
     steps: { gap: 10, marginTop: 18 },
     subtitle: { color: c.muted, fontSize: 13, lineHeight: 18, marginTop: 4 },
-    title: { color: c.fg, fontSize: 22, fontWeight: "700", letterSpacing: -0.8, marginTop: 4 },
+    title: { color: c.fg, fontSize: 22, fontWeight: "700", letterSpacing: -0.8 },
+    titleDots: { color: c.secondary, marginLeft: 5 },
+    titleRow: { alignItems: "baseline", flexDirection: "row", marginTop: 4 },
     wordmark: { alignItems: "center", flexDirection: "row", gap: 8 },
     wordmarkText: { color: c.fg, fontSize: 16, fontWeight: "800", letterSpacing: 0.6 }
   });
@@ -85,19 +94,24 @@ export default function LoadingScreen() {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const params = useLocalSearchParams<LoadingParams>();
   const { run } = useAnalyze();
-  const [progress, setProgress] = useState(14);
-  const progressRef = useRef(14);
+  const [progress, setProgress] = useState(8);
+  const [tipIndex, setTipIndex] = useState(0);
+  const progressRef = useRef(8);
   const mountedRef = useRef(true);
 
   const scanY = useSharedValue(0);
-  scanY.value = withRepeat(
-    withSequence(
-      withTiming(1, { duration: 2400, easing: Easing.inOut(Easing.ease) }),
-      withTiming(0, { duration: 2400, easing: Easing.inOut(Easing.ease) })
-    ),
-    -1,
-    false
-  );
+
+  // 렌더 중이 아니라 마운트 후에 애니메이션 시작 (reanimated strict-mode 경고 방지)
+  useEffect(() => {
+    scanY.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 2400, easing: Easing.inOut(Easing.ease) }),
+        withTiming(0, { duration: 2400, easing: Easing.inOut(Easing.ease) })
+      ),
+      -1,
+      false
+    );
+  }, []);
 
   const scanStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: scanY.value * (IMAGE_SIZE - 90) }]
@@ -108,41 +122,54 @@ export default function LoadingScreen() {
     const imageUri = readParam(params.imageUri);
     const imageName = readParam(params.imageName) || "image.jpg";
 
+    // 실제 소요시간(최대 ~1분)이 길어 95%에 점근하도록 천천히 채웁니다(멈춘 듯 보이지 않게).
     const progressTimer = setInterval(() => {
-      const next = Math.min(progressRef.current + 18, 96);
+      const next = progressRef.current + (95 - progressRef.current) * 0.045;
       progressRef.current = next;
-      if (mountedRef.current) setProgress(next);
-    }, 650);
+      if (mountedRef.current) setProgress(Math.min(95, next));
+    }, 500);
+
+    // 대기 동안 안내 문구를 순환시켜 살아있게 보이게 합니다.
+    const tipTimer = setInterval(() => {
+      if (mountedRef.current) setTipIndex((i) => (i + 1) % TIPS.length);
+    }, 3200);
 
     async function analyze() {
       if (!imageUri) { router.replace("/result"); return; }
       try {
+        await safeRemoveItem(STORAGE_KEYS.pendingResult);
         const data = await run({ imageUri, imageName });
         if (!mountedRef.current) return;
         clearInterval(progressTimer);
+        clearInterval(tipTimer);
         setProgress(100);
         const item: HistoryItem = {
           ...data, id: `analysis-${Date.now()}`,
           imageUri, imageName, createdAt: new Date().toISOString()
         };
         await safeSetString(STORAGE_KEYS.pendingResult, JSON.stringify(item));
-        setTimeout(() => router.replace("/result"), 300);
+        const autoSave = await safeGetString(STORAGE_KEYS.autoSave);
+        if (autoSave !== "0") {
+          await addHistoryItem(item);
+        }
+        setTimeout(() => router.replace({ pathname: "/result", params: { analysisId: item.id } }), 300);
       } catch (error) {
         if (!mountedRef.current) return;
         clearInterval(progressTimer);
+        clearInterval(tipTimer);
         const message =
           error instanceof Error && error.message
             ? error.message
-            : "서버에 연결하지 못했습니다. 설정에서 백엔드 주소를 확인해 주세요.";
+            : "서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.";
         Alert.alert("분석 실패", message, [
           { text: "홈으로", style: "cancel", onPress: () => router.replace("/(tabs)/home") },
-          { text: "연결 설정 열기", onPress: () => router.replace("/(tabs)/settings") }
+          { text: "설정 열기", onPress: () => router.replace("/(tabs)/settings") }
         ]);
       }
     }
 
     void analyze();
-    return () => { mountedRef.current = false; clearInterval(progressTimer); };
+    return () => { mountedRef.current = false; clearInterval(progressTimer); clearInterval(tipTimer); };
   }, []);
 
   const imageUri = readParam(params.imageUri);
@@ -163,14 +190,15 @@ export default function LoadingScreen() {
           <Logo size={22} />
           <Text style={styles.wordmarkText}>A-EYE</Text>
         </View>
-        <Text style={styles.progressLabel}>{Math.min(progress, 99)}%</Text>
+        <Text style={styles.progressLabel}>{Math.round(Math.min(progress, 99))}%</Text>
       </View>
 
       <View style={styles.container}>
-        <Text style={styles.title}>
-          분석 중<Text style={{ color: colors.secondary }}>...</Text>
-        </Text>
-        <Text style={styles.subtitle}>세 시선 모델이 이미지를 교차 검증하고 있어요</Text>
+        <View style={styles.titleRow}>
+          <Text style={styles.title}>분석 중</Text>
+          <Text style={[styles.title, styles.titleDots]}>...</Text>
+        </View>
+        <Text style={styles.subtitle}>여러 AI 모델이 교차 검증 중이에요 · 최대 1분 소요</Text>
 
         <View style={styles.imageWrap}>
           {imageUri ? (
@@ -222,7 +250,7 @@ export default function LoadingScreen() {
           </Animated.View>
         </View>
 
-        <Text style={styles.quote}>AI는 종종 디테일에서 흔적을 남깁니다</Text>
+        <Text style={styles.quote}>{TIPS[tipIndex]}</Text>
       </View>
     </SafeAreaView>
   );

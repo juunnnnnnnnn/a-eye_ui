@@ -126,16 +126,19 @@ export default function HomeScreen() {
         base64: false,
         exif: false,
         mediaTypes: ["images"],
-        preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
+        // Compatible: HEIC 등도 읽을 수 있는 JPEG로 변환 (Current 는 "Cannot load representation" 오류 유발)
+        preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
         quality: 1
       });
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
         let imageUri = asset.uri;
-        try {
-          imageUri = await resizeForAnalysis(asset.uri);
-        } catch (resizeError) {
-          console.warn("선택한 이미지 리사이즈 실패, 원본으로 분석합니다.", resizeError);
+        if ((asset.fileSize ?? 0) > 9 * 1024 * 1024) {
+          try {
+            imageUri = await resizeForAnalysis(asset.uri);
+          } catch (resizeError) {
+            console.warn("선택한 이미지 리사이즈 실패, 원본으로 분석합니다.", resizeError);
+          }
         }
         router.push({ pathname: "/loading", params: { imageUri, imageName: asset.fileName || makeImageName("gallery") } });
       }

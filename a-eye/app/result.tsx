@@ -13,14 +13,14 @@ import { Wordmark } from "@/components/Wordmark";
 import { Logo } from "@/components/Logo";
 import { ImageToggle } from "@/components/ImageToggle";
 import { FallbackError } from "@/components/FallbackError";
-import { useHistory } from "@/hooks/useHistory";
 import { APP_SHARE_URL } from "@/constants/config";
+import { normalizeAnalyzeResponse } from "@/lib/api";
 import { loadHistory, safeGetString, STORAGE_KEYS } from "@/lib/storage";
 import { useTheme } from "@/lib/theme";
 import type { ColorTokens } from "@/constants/colors";
-import type { HistoryItem } from "@/lib/types";
+import type { BackendAnalyzeResponse, HistoryItem } from "@/lib/types";
 
-type ResultParams = { historyId?: string };
+type ResultParams = { analysisId?: string; historyId?: string };
 
 function readParam(v: string | string[] | undefined) {
   return Array.isArray(v) ? v[0] : v;
@@ -144,6 +144,18 @@ async function loadPending(): Promise<HistoryItem | null> {
       typeof item.heatmap_b64 === "string" && typeof item.overlay_b64 === "string" &&
       typeof item.model_version === "string" && typeof item.elapsed_ms === "number"
     ) return item as HistoryItem;
+    if (
+      typeof item.id === "string" && typeof item.imageUri === "string" &&
+      typeof item.imageName === "string" && typeof item.createdAt === "string"
+    ) {
+      return {
+        ...normalizeAnalyzeResponse(item as BackendAnalyzeResponse),
+        id: item.id,
+        imageUri: item.imageUri,
+        imageName: item.imageName,
+        createdAt: item.createdAt
+      };
+    }
     return null;
   } catch { return null; }
 }
@@ -334,7 +346,6 @@ export default function ResultScreen() {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const params = useLocalSearchParams<ResultParams>();
-  const { addItem } = useHistory();
   const [item, setItem] = useState<HistoryItem | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [expanded, setExpanded] = useState(true);
@@ -350,10 +361,9 @@ export default function ResultScreen() {
         next = history.find((h) => h.id === historyId) ?? null;
       } else {
         next = await loadPending();
-        if (next && mounted) {
-          // 설정의 "히스토리 자동 저장"이 꺼져 있으면 기록에 추가하지 않습니다.
-          const autoSave = await safeGetString(STORAGE_KEYS.autoSave);
-          if (autoSave !== "0") await addItem(next);
+        const analysisId = readParam(params.analysisId);
+        if (analysisId && next?.id !== analysisId) {
+          next = null;
         }
       }
       if (!mounted) return;
@@ -362,7 +372,7 @@ export default function ResultScreen() {
     }
     void load();
     return () => { mounted = false; };
-  }, [addItem, params.historyId]);
+  }, [params.analysisId, params.historyId]);
 
   const derived = useResultDerived(item);
 

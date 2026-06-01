@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { useFocusEffect } from "expo-router";
 import type { HistoryItem } from "@/lib/types";
-import { clearHistory, loadHistory, saveHistoryWithPrune } from "@/lib/storage";
+import { addHistoryItem, clearHistory, loadHistory, saveHistoryWithPrune } from "@/lib/storage";
 
 export function useHistory() {
   const [items, setItems] = useState<HistoryItem[]>([]);
@@ -21,9 +21,7 @@ export function useHistory() {
   );
 
   const addItem = useCallback(async (item: HistoryItem) => {
-    const current = await loadHistory();
-    const next = [item, ...current.filter((entry) => entry.id !== item.id)];
-    const saved = await saveHistoryWithPrune(next);
+    const saved = await addHistoryItem(item);
     setItems(saved);
   }, []);
 

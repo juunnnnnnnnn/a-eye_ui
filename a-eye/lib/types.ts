@@ -13,6 +13,21 @@ export type AnalyzeResponse = {
   detail_score?: number | null;
 };
 
+export type BackendAnalyzeResponse = Partial<AnalyzeResponse> & {
+  api_version?: string;
+  fake_prob?: number;
+  weighted_fake_prob?: number;
+  latency_ms?: number;
+  prediction?: string;
+  verdict?: Verdict | "fake" | "real" | "review";
+  model_probs?: Array<{
+    fake_prob?: number;
+  }>;
+  models?: Array<{
+    fake_prob?: number;
+  }>;
+};
+
 export type HistoryItem = AnalyzeResponse & {
   id: string;
   imageUri: string;

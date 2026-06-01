@@ -78,10 +78,7 @@
       "expo-font"
     ],
     "extra": {
-      "defaultBackendUrl": "https://wonjun12-aeye-backend.hf.space",
-      "eas": {
-        "projectId": "TO_BE_FILLED_BY_EAS_INIT"
-      }
+      "defaultBackendUrl": "https://wonjun12-aeye-backend.hf.space"
     }
   }
 }
